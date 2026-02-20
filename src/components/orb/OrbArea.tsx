@@ -1,24 +1,43 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useCallback, useState } from "react";
+import { AiOrb, type OrbState } from "@/components/orb/AiOrb";
+
+const STATE_CYCLE: OrbState[] = [
+    "idle",
+    "listening",
+    "thinking",
+    "speaking",
+    "backgroundListening",
+];
+
+const STATE_LABELS: Record<OrbState, string> = {
+    idle: "Idle",
+    listening: "Listening",
+    thinking: "Thinking",
+    speaking: "Speaking",
+    backgroundListening: "Background",
+};
 
 export function OrbArea() {
+    const [stateIndex, setStateIndex] = useState(0);
+
+    const currentState = STATE_CYCLE[stateIndex];
+
+    const cycleState = useCallback(() => {
+        setStateIndex((prev) => (prev + 1) % STATE_CYCLE.length);
+    }, []);
+
     return (
-        <div className="flex items-center justify-center py-8">
-            <motion.div
-                className="size-24 rounded-full border border-violet-500/20 bg-violet-500/10"
-                animate={{
-                    boxShadow: [
-                        "0 0 0 0px rgba(139,92,246,0.15)",
-                        "0 0 0 12px rgba(139,92,246,0)",
-                    ],
-                }}
-                transition={{
-                    duration: 2,
-                    repeat: Infinity,
-                    ease: "easeOut",
-                }}
+        <div className="flex flex-col items-center justify-center gap-4 py-8">
+            <AiOrb
+                state={currentState}
+                audioLevel={currentState === "listening" ? 0.6 : 0}
+                onClick={cycleState}
             />
+            <span className="text-xs tracking-wide text-zinc-500">
+                {STATE_LABELS[currentState]}
+            </span>
         </div>
     );
 }
