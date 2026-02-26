@@ -37,7 +37,7 @@ export function ChatArea() {
 
     if (messages.length === 0) {
         return (
-            <div className="flex flex-1 flex-col items-center overflow-y-auto px-4 py-6">
+            <div className="flex flex-1 flex-col items-center overflow-y-auto py-6">
                 <p className="mt-auto text-sm text-zinc-600">
                     No messages yet
                 </p>
@@ -46,7 +46,7 @@ export function ChatArea() {
     }
 
     return (
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-6">
+        <div className="flex flex-1 flex-col gap-3 overflow-y-auto py-6">
             {messages.map((msg) => (
                 <MessageBubble key={msg.id} message={msg} />
             ))}

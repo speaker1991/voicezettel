@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 
 export function InputBar() {
     return (
-        <div className="shrink-0 border-t border-white/5 px-4 py-3">
-            <div className="mx-auto flex w-full max-w-2xl items-center gap-2">
+        <div className="shrink-0 border-t border-white/5 py-3">
+            <div className="flex w-full items-center gap-2">
                 <Button
                     variant="ghost"
                     size="icon-sm"
