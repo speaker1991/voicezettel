@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { AiOrb, type OrbState } from "@/components/orb/AiOrb";
+import { useCallback } from "react";
+import { AiOrb } from "@/components/orb/AiOrb";
+import { useChatStore } from "@/stores/chatStore";
+import type { OrbState } from "@/types/chat";
 
 const STATE_CYCLE: OrbState[] = [
     "idle",
@@ -20,23 +22,25 @@ const STATE_LABELS: Record<OrbState, string> = {
 };
 
 export function OrbArea() {
-    const [stateIndex, setStateIndex] = useState(0);
-
-    const currentState = STATE_CYCLE[stateIndex];
+    const orbState = useChatStore((s) => s.orbState);
+    const audioLevel = useChatStore((s) => s.audioLevel);
+    const setOrbState = useChatStore((s) => s.setOrbState);
 
     const cycleState = useCallback(() => {
-        setStateIndex((prev) => (prev + 1) % STATE_CYCLE.length);
-    }, []);
+        const idx = STATE_CYCLE.indexOf(orbState);
+        const next = STATE_CYCLE[(idx + 1) % STATE_CYCLE.length];
+        setOrbState(next);
+    }, [orbState, setOrbState]);
 
     return (
         <div className="flex flex-col items-center justify-center gap-4 py-8">
             <AiOrb
-                state={currentState}
-                audioLevel={currentState === "listening" ? 0.6 : 0}
+                state={orbState}
+                audioLevel={audioLevel}
                 onClick={cycleState}
             />
             <span className="text-xs tracking-wide text-zinc-500">
-                {STATE_LABELS[currentState]}
+                {STATE_LABELS[orbState]}
             </span>
         </div>
     );

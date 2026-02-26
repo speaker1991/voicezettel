@@ -1,13 +1,7 @@
 "use client";
 
 import { motion, type Variants } from "framer-motion";
-
-type OrbState =
-    | "idle"
-    | "listening"
-    | "thinking"
-    | "speaking"
-    | "backgroundListening";
+import type { OrbState } from "@/types/chat";
 
 interface AiOrbProps {
     state: OrbState;
