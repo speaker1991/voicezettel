@@ -1,13 +1,24 @@
-export type Message = {
-    id: string;
-    role: "user" | "assistant" | "system";
-    content: string;
-    timestamp: string;
-    source: "voice" | "text";
-    metadata?: {
-        rewardType?: "note" | "insight" | "rag" | "task";
-    };
-};
+import { z } from "zod";
+
+// ── Zod schemas ──────────────────────────────────────────────
+export const MessageMetadataSchema = z.object({
+    rewardType: z
+        .enum(["note", "insight", "rag", "task"])
+        .optional(),
+});
+
+export const MessageSchema = z.object({
+    id: z.string(),
+    role: z.enum(["user", "assistant", "system"]),
+    content: z.string(),
+    timestamp: z.string(),
+    source: z.enum(["voice", "text"]),
+    metadata: MessageMetadataSchema.optional(),
+});
+
+// ── Inferred TypeScript types ────────────────────────────────
+export type Message = z.infer<typeof MessageSchema>;
+export type MessageMetadata = z.infer<typeof MessageMetadataSchema>;
 
 export type SessionStatus = {
     server: boolean;
