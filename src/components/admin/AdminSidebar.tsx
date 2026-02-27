@@ -41,19 +41,17 @@ export function AdminSidebar() {
 
     return (
         <>
-            {/* Mobile hamburger */}
-            <button
-                type="button"
-                onClick={toggleSidebar}
-                className="fixed left-3 top-3 z-50 rounded-lg border border-zinc-800 bg-zinc-900/90 p-2 text-zinc-400 backdrop-blur-sm md:hidden"
-                aria-label="Toggle menu"
-            >
-                {sidebarOpen ? (
-                    <X className="size-5" />
-                ) : (
+            {/* Mobile hamburger — only when closed */}
+            {!sidebarOpen && (
+                <button
+                    type="button"
+                    onClick={toggleSidebar}
+                    className="fixed left-3 top-3 z-50 rounded-lg border border-zinc-800 bg-zinc-900/90 p-2 text-zinc-400 backdrop-blur-sm md:hidden"
+                    aria-label="Open menu"
+                >
                     <Menu className="size-5" />
-                )}
-            </button>
+                </button>
+            )}
 
             {/* Overlay on mobile */}
             <AnimatePresence>
@@ -68,22 +66,32 @@ export function AdminSidebar() {
                 )}
             </AnimatePresence>
 
-            {/* Sidebar — fixed on mobile, static on desktop */}
+            {/* Sidebar */}
             <aside
                 className={`fixed inset-y-0 left-0 z-40 flex w-[220px] flex-col border-r border-white/5 bg-zinc-950 transition-transform duration-200 md:relative md:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
                     }`}
             >
-                {/* Logo */}
-                <div className="flex h-14 items-center gap-1 border-b border-white/5 px-5">
-                    <span className="text-base font-bold text-zinc-100">
+                {/* Logo row with close button inside */}
+                <div className="flex h-14 items-center border-b border-white/5 px-4">
+                    <span className="text-base font-normal tracking-tight text-zinc-100">
                         Voice
                     </span>
-                    <span className="bg-gradient-to-r from-violet-500 to-cyan-400 bg-clip-text text-base font-light text-transparent">
+                    <span className="bg-gradient-to-br from-violet-400 to-violet-600 bg-clip-text text-base font-light tracking-tight text-transparent">
                         Zettel
                     </span>
-                    <span className="ml-2 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-400">
+                    <span className="ml-1.5 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-400">
                         ADMIN
                     </span>
+                    <div className="flex-1" />
+                    {/* Close button — inside sidebar, mobile only */}
+                    <button
+                        type="button"
+                        onClick={toggleSidebar}
+                        className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300 md:hidden"
+                        aria-label="Close menu"
+                    >
+                        <X className="size-4" />
+                    </button>
                 </div>
 
                 {/* Navigation */}

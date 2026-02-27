@@ -2,7 +2,8 @@
 
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Copy, Bot, Loader2 } from "lucide-react";
+import { X, Copy, Bot, Loader2, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -245,9 +246,9 @@ export function SettingsPanel({
                                     <div className="flex items-center gap-2">
                                         <button
                                             className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.aiProvider ===
-                                                    "openai"
-                                                    ? "bg-violet-600 text-white"
-                                                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                "openai"
+                                                ? "bg-violet-600 text-white"
+                                                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                 }`}
                                             onClick={() =>
                                                 settings.setAiProvider(
@@ -259,9 +260,9 @@ export function SettingsPanel({
                                         </button>
                                         <button
                                             className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.aiProvider ===
-                                                    "google"
-                                                    ? "bg-violet-600 text-white"
-                                                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                "google"
+                                                ? "bg-violet-600 text-white"
+                                                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                 }`}
                                             onClick={() =>
                                                 settings.setAiProvider(
@@ -413,6 +414,17 @@ export function SettingsPanel({
                                     </motion.div>
                                 )}
                             </AnimatePresence>
+                        </section>
+
+                        {/* Admin panel link */}
+                        <section className="mt-4 border-t border-zinc-800 pt-4">
+                            <Link
+                                href="/admin"
+                                className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-2.5 text-sm font-medium text-violet-400 transition-all hover:bg-violet-500/10 hover:shadow-[0_0_12px_rgba(139,92,246,0.15)]"
+                            >
+                                <ShieldCheck className="size-4" />
+                                Админ-панель
+                            </Link>
                         </section>
                     </motion.div>
                 </>

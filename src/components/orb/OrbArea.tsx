@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence, type PanInfo } from "framer-motion";
 import { ParticleOrb } from "@/components/orb/ParticleOrb";
 import { LavalierOrb } from "@/components/orb/LavalierOrb";
@@ -31,9 +31,17 @@ export function OrbArea() {
 
     const [mode, setMode] = useState<OrbMode>("voice");
     const [showSummary, setShowSummary] = useState(false);
+    const [showHint, setShowHint] = useState(true);
+
+    // Auto-hide hint after 4 seconds
+    useEffect(() => {
+        const timer = setTimeout(() => setShowHint(false), 4000);
+        return () => clearTimeout(timer);
+    }, []);
 
     const handleOrbClick = useCallback(() => {
         warmUpAudio();
+        setShowHint(false);
         if (isVoiceActive) {
             stopVoice();
         } else {
@@ -78,7 +86,7 @@ export function OrbArea() {
                         >
                             <div
                                 data-orb-center
-                                className="flex flex-col items-center justify-center gap-0 py-4"
+                                className="relative flex flex-col items-center justify-center gap-0 py-4"
                             >
                                 <ParticleOrb
                                     state={orbState}
@@ -86,6 +94,28 @@ export function OrbArea() {
                                     particleCount={orbParticles}
                                     onClick={handleOrbClick}
                                 />
+
+                                {/* Tap hint — fades out after 4s */}
+                                <AnimatePresence>
+                                    {showHint && orbState === "idle" && (
+                                        <motion.div
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            exit={{ opacity: 0 }}
+                                            transition={{ duration: 0.8 }}
+                                            className="pointer-events-none absolute inset-0 flex items-center justify-center"
+                                        >
+                                            <motion.span
+                                                animate={{ opacity: [0.5, 1, 0.5] }}
+                                                transition={{ duration: 2.5, repeat: Infinity }}
+                                                className="bg-gradient-to-br from-violet-400 to-violet-600 bg-clip-text text-sm font-medium tracking-wider text-transparent drop-shadow-[0_0_8px_rgba(139,92,246,0.4)]"
+                                            >
+                                                Нажми на шар
+                                            </motion.span>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+
                                 <span className="-mt-5 text-xs tracking-wide text-zinc-500">
                                     {STATE_LABELS[orbState]}
                                 </span>

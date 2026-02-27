@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { DevOverlaySuppressor } from "@/components/layout/DevOverlaySuppressor";
 import { ChangelogNotifier } from "@/components/layout/ChangelogNotifier";
@@ -18,6 +18,9 @@ export const metadata: Metadata = {
   title: "VoiceZettel",
   description: "Voice-first Zettelkasten with AI",
   manifest: "/manifest.json",
+};
+
+export const viewport: Viewport = {
   themeColor: "#7c3aed",
 };
 

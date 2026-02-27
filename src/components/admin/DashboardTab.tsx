@@ -1,5 +1,6 @@
 "use client";
 
+import { Lightbulb, Heart, Users, ListChecks } from "lucide-react";
 import { useCountersStore } from "@/stores/countersStore";
 import { useChatStore } from "@/stores/chatStore";
 import type { ServiceEntry, ActivityItem } from "@/types/admin";
@@ -49,7 +50,14 @@ export function DashboardTab() {
             icon: "📝",
             label: "ЗАМЕТКИ",
             value: String(totalNotes),
-            sub: `💡${ideas} 📊${facts} 👤${persons} ✅${tasks}`,
+            sub: (
+                <span className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5"><Lightbulb className="inline size-3 text-violet-400" />{ideas}</span>
+                    <span className="inline-flex items-center gap-0.5"><Heart className="inline size-3 text-violet-400" />{facts}</span>
+                    <span className="inline-flex items-center gap-0.5"><Users className="inline size-3 text-violet-400" />{persons}</span>
+                    <span className="inline-flex items-center gap-0.5"><ListChecks className="inline size-3 text-violet-400" />{tasks}</span>
+                </span>
+            ),
             color: "text-violet-400",
         },
         {

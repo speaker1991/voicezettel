@@ -15,40 +15,9 @@ export function DevOverlaySuppressor() {
         // 1. Intercept console.error → push to notification bell
         const origError = console.error;
 
-        const INTERNAL_PATTERNS = [
-            "Warning:",
-            "Minified React",
-            "hydrat",
-            "React does not recognize",
-            "Invalid DOM property",
-            "Each child in a list",
-            "Cannot update a component",
-            "findDOMNode is deprecated",
-            "act(",
-            "useLayoutEffect does nothing",
-            "ResizeObserver",
-            "Non-Error promise rejection",
-            "ChunkLoadError",
-            "Loading chunk",
-            "Failed to load resource",
-            "net::ERR_",
-            "_next/",
-            "webpack",
-            "hot-update",
-            "HMR",
-            "Fast Refresh",
-            "nextjs",
-            "next-dev",
-            "react-dom",
-            "Unhandled Runtime Error",
-            "Async call stack",
-            "[object Object]",
-            "data-nextjs",
-            "source-map",
-            "DevTools",
-            "favicon",
-            "manifest",
-        ];
+        // Pattern: only show errors with Cyrillic text (= our app messages)
+        // This blocks ALL internal React/Next/Webpack English errors
+        const HAS_CYRILLIC = /[\u0400-\u04FF]/;
 
         console.error = (...args: unknown[]) => {
             origError.apply(console, args);
@@ -58,10 +27,8 @@ export function DevOverlaySuppressor() {
                 )
                 .join(" ");
 
-            const isInternal = INTERNAL_PATTERNS.some((p) =>
-                message.includes(p),
-            );
-            if (!isInternal && message.trim().length > 5) {
+            // Only show messages that contain Russian text (our notifications)
+            if (HAS_CYRILLIC.test(message) && message.trim().length > 5) {
                 useNotificationStore
                     .getState()
                     .addNotification(message.slice(0, 200), "error");
