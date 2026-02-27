@@ -1,0 +1,17 @@
+{
+    "name": "VoiceZettel",
+    "short_name": "VoiceZettel",
+    "description": "Voice-first Zettelkasten with AI",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#09090b",
+    "theme_color": "#7c3aed",
+    "icons": [
+        {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ]
+}

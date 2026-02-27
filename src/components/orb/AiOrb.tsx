@@ -6,6 +6,7 @@ import type { OrbState } from "@/types/chat";
 interface AiOrbProps {
     state: OrbState;
     audioLevel?: number;
+    particleCount?: number;
     onClick?: () => void;
 }
 

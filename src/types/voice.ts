@@ -40,8 +40,17 @@ export type RealtimeClientEvent =
     | {
         type: "session.update";
         session: {
+            modalities?: string[];
+            instructions?: string;
             input_audio_transcription?: {
                 model: string;
+                language?: string;
+            };
+            turn_detection?: {
+                type: "server_vad";
+                threshold?: number;
+                prefix_padding_ms?: number;
+                silence_duration_ms?: number;
             };
         };
     };
@@ -65,6 +74,12 @@ export type RealtimeServerEvent =
     }
     | {
         type: "response.done";
+    }
+    | {
+        type: "input_audio_buffer.speech_started";
+    }
+    | {
+        type: "input_audio_buffer.speech_stopped";
     }
     | {
         type: "session.created";

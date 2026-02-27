@@ -6,10 +6,10 @@ import type { Message } from "@/types/chat";
 
 function bubbleClasses(role: Message["role"]): string {
     if (role === "user") {
-        return "ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-violet-600 px-4 py-2.5 text-sm text-white";
+        return "ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-[#7F22FE] px-4 py-2.5 text-sm text-white";
     }
     if (role === "assistant") {
-        return "mr-auto max-w-[80%] rounded-2xl rounded-bl-sm bg-zinc-800 px-4 py-2.5 text-sm text-zinc-100";
+        return "mr-auto max-w-[80%] rounded-2xl rounded-bl-sm bg-[#BA38BE] px-4 py-2.5 text-sm text-zinc-100";
     }
     return "mx-auto max-w-[80%] rounded-xl bg-zinc-900 px-3 py-1.5 text-center text-xs text-zinc-500";
 }
@@ -30,10 +30,31 @@ function MessageBubble({ message }: { message: Message }) {
 export function ChatArea() {
     const messages = useChatStore((s) => s.messages);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const scrollTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
+
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+
+        const onScroll = () => {
+            el.classList.add("is-scrolling");
+            clearTimeout(scrollTimer.current);
+            scrollTimer.current = setTimeout(() => {
+                el.classList.remove("is-scrolling");
+            }, 1500);
+        };
+
+        el.addEventListener("scroll", onScroll, { passive: true });
+        return () => {
+            el.removeEventListener("scroll", onScroll);
+            clearTimeout(scrollTimer.current);
+        };
+    }, []);
 
     if (messages.length === 0) {
         return (
@@ -46,11 +67,16 @@ export function ChatArea() {
     }
 
     return (
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto py-6">
-            {messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
-            ))}
-            <div ref={bottomRef} />
+        <div className="relative flex flex-1 flex-col min-h-0">
+            {/* Gradient fade at top — messages disappear behind orb */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-40 bg-gradient-to-b from-zinc-950 via-zinc-950/50 to-transparent" />
+
+            <div ref={scrollRef} className="flex flex-1 flex-col gap-3 overflow-y-auto py-6 pr-5 chat-scrollbar">
+                {messages.map((msg) => (
+                    <MessageBubble key={msg.id} message={msg} />
+                ))}
+                <div ref={bottomRef} />
+            </div>
         </div>
     );
 }

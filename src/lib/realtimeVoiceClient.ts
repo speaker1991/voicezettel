@@ -1,9 +1,9 @@
 import type {
     RealtimeClientEvent,
     RealtimeServerEvent,
-    EphemeralTokenResponse,
 } from "@/types/voice";
 import { EphemeralTokenResponseSchema } from "@/types/voice";
+import { CHANGELOG } from "@/lib/changelog";
 import { logger } from "@/lib/logger";
 
 // ── Callback types ───────────────────────────────────────────
@@ -14,11 +14,9 @@ export interface VoiceClientCallbacks {
     onAudioEnd: () => void;
     onSessionError: (err: Error) => void;
     onConnected: () => void;
+    onUserSpeechStarted: () => void;
+    onUserSpeechStopped: () => void;
 }
-
-// ── OpenAI Realtime WebRTC endpoint ──────────────────────────
-const REALTIME_BASE_URL = "https://api.openai.com/v1/realtime";
-const REALTIME_MODEL = "gpt-4o-realtime-preview-2024-12-17";
 
 // ── Client class ─────────────────────────────────────────────
 export class RealtimeVoiceClient {
@@ -27,6 +25,7 @@ export class RealtimeVoiceClient {
     private localStream: MediaStream | null = null;
     private audioEl: HTMLAudioElement | null = null;
     private assistantTranscript = "";
+    private ephemeralToken = "";
     private callbacks: VoiceClientCallbacks;
 
     constructor(callbacks: VoiceClientCallbacks) {
@@ -37,27 +36,58 @@ export class RealtimeVoiceClient {
 
     async start(): Promise<void> {
         // 1. Fetch ephemeral token from our server route
-        const token = await this.fetchEphemeralToken();
+        this.ephemeralToken = await this.fetchEphemeralToken();
 
-        // 2. Create peer connection
-        this.pc = new RTCPeerConnection();
+        // 2. Create peer connection with STUN for NAT traversal
+        this.pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+            ],
+        });
+
+        // DEBUG: monitor connection states
+        this.pc.oniceconnectionstatechange = () => {
+            logger.warn("ICE state:", this.pc?.iceConnectionState);
+        };
+        this.pc.onconnectionstatechange = () => {
+            logger.warn("Connection state:", this.pc?.connectionState);
+        };
 
         // 3. Set up remote audio playback
         this.audioEl = document.createElement("audio");
         this.audioEl.autoplay = true;
+        this.audioEl.setAttribute("playsinline", "true");
+        // Attach to DOM for better mobile audio handling
+        this.audioEl.style.display = "none";
+        document.body.appendChild(this.audioEl);
 
         this.pc.ontrack = (event) => {
+            logger.warn("Remote track received:", event.track.kind);
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
+                // Ensure playback starts (needed on mobile)
+                this.audioEl.play().catch(() => {
+                    logger.warn("Auto-play blocked, user interaction needed");
+                });
             }
         };
 
         // 4. Capture microphone
+        if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error(
+                "Микрофон недоступен. Убедитесь что страница открыта через HTTPS.",
+            );
+        }
         this.localStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
         });
         for (const track of this.localStream.getTracks()) {
             this.pc.addTrack(track, this.localStream);
+            logger.warn("Added audio track:", track.label, "enabled:", track.enabled, "muted:", track.muted);
         }
 
         // 5. Open data channel for events
@@ -70,21 +100,18 @@ export class RealtimeVoiceClient {
             this.handleServerEvent(event);
         };
 
-        // 6. SDP offer/answer exchange
+        // 6. SDP offer/answer exchange (through server proxy to avoid CORS)
         const offer = await this.pc.createOffer();
         await this.pc.setLocalDescription(offer);
 
-        const sdpResponse = await fetch(
-            `${REALTIME_BASE_URL}?model=${REALTIME_MODEL}`,
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/sdp",
-                },
-                body: offer.sdp,
-            },
-        );
+        const sdpResponse = await fetch("/api/realtime-sdp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sdp: offer.sdp,
+                token: this.ephemeralToken,
+            }),
+        });
 
         if (!sdpResponse.ok) {
             throw new Error(
@@ -116,9 +143,28 @@ export class RealtimeVoiceClient {
         }
         if (this.audioEl) {
             this.audioEl.srcObject = null;
+            this.audioEl.remove();
             this.audioEl = null;
         }
         this.assistantTranscript = "";
+    }
+
+    /** Mute local mic (while AI speaks to prevent echo) */
+    muteMic(): void {
+        if (this.localStream) {
+            for (const track of this.localStream.getAudioTracks()) {
+                track.enabled = false;
+            }
+        }
+    }
+
+    /** Unmute local mic */
+    unmuteMic(): void {
+        if (this.localStream) {
+            for (const track of this.localStream.getAudioTracks()) {
+                track.enabled = true;
+            }
+        }
     }
 
     sendText(text: string): void {
@@ -173,15 +219,43 @@ export class RealtimeVoiceClient {
     private configureSession(): void {
         if (!this.dc || this.dc.readyState !== "open") return;
 
+        const changelogContext = CHANGELOG.slice(0, 5)
+            .map((e) => `- ${e.message}`)
+            .join("\n");
+
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
+                modalities: ["text", "audio"],
+                instructions: `Ты — помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-2 предложения. Не повторяй вопрос пользователя.
+
+Если пользователь просит создать/записать/запомнить что-то, определи категорию и добавь тег в конец ответа:
+- Задачи, заметки, напоминания, дела → [COUNTER:tasks]
+- Идеи, мысли, предложения, концепты → [COUNTER:ideas]
+- Факты, знания, информация, определения → [COUNTER:facts]
+- Люди, контакты, персоны, имена → [COUNTER:persons]
+
+Пример: "Заметка создана! [COUNTER:tasks]"
+Не добавляй тег если пользователь просто разговаривает или задаёт вопрос.
+
+Последние обновления приложения VoiceZettel:
+${changelogContext}
+
+Если пользователь спросит "что нового", "какие обновления", "расскажи об изменениях" — расскажи об этих обновлениях кратко и понятно.`,
                 input_audio_transcription: {
                     model: "whisper-1",
+                    language: "ru",
+                },
+                turn_detection: {
+                    type: "server_vad",
+                    threshold: 0.7,
+                    prefix_padding_ms: 300,
+                    silence_duration_ms: 1200,
                 },
             },
         };
         this.dc.send(JSON.stringify(sessionUpdate));
+        logger.warn("Session configured with VAD");
     }
 
     private handleServerEvent(event: MessageEvent): void {
@@ -193,7 +267,18 @@ export class RealtimeVoiceClient {
             return;
         }
 
+        // DEBUG: log all incoming events
+        logger.warn("Realtime event:", parsed.type, parsed);
+
         switch (parsed.type) {
+            case "input_audio_buffer.speech_started":
+                this.callbacks.onUserSpeechStarted();
+                break;
+
+            case "input_audio_buffer.speech_stopped":
+                this.callbacks.onUserSpeechStopped();
+                break;
+
             case "conversation.item.input_audio_transcription.completed":
                 this.callbacks.onTranscriptUser(parsed.transcript);
                 break;

@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 
 /**
  * Thin logger wrapper.
