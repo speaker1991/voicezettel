@@ -9,6 +9,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { useAnimationStore } from "@/stores/animationStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
+import { sendToObsidian } from "@/lib/obsidianClient";
 import { logger } from "@/lib/logger";
 
 export function useVoiceSession() {
@@ -122,6 +123,24 @@ export function useVoiceSession() {
                         lastAssistantText.current,
                     );
                     updateLastAssistantMessage({ content: cleaned });
+                }
+
+                // ── Auto-send to Obsidian (fire-and-forget) ──
+                const aiText = counterType
+                    ? stripCounterTag(lastAssistantText.current)
+                    : lastAssistantText.current;
+                if (aiText) {
+                    const msgs = useChatStore.getState().messages;
+                    const lastUser = [...msgs]
+                        .reverse()
+                        .find((m) => m.role === "user");
+                    if (lastUser) {
+                        sendToObsidian(lastUser.content, aiText).catch(
+                            () => {
+                                /* handled inside sendToObsidian */
+                            },
+                        );
+                    }
                 }
 
                 isAssistantResponding.current = false;

@@ -7,6 +7,7 @@ import { useAnimationStore } from "@/stores/animationStore";
 import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
+import { sendToObsidian } from "@/lib/obsidianClient";
 import { logger } from "@/lib/logger";
 
 export function useTextChat() {
@@ -36,9 +37,9 @@ export function useTextChat() {
             const { aiProvider, systemPrompt } =
                 useSettingsStore.getState();
 
-            // 3. Build message history (last 20 messages for context)
+            // 3. Build message history (last 50 messages for context)
             const allMessages = useChatStore.getState().messages;
-            const history = allMessages.slice(-20).map((m) => ({
+            const history = allMessages.slice(-50).map((m) => ({
                 role: m.role,
                 content: m.content,
             }));
@@ -146,6 +147,14 @@ export function useTextChat() {
                     const cleaned = stripCounterTag(accumulated);
                     updateLastAssistantMessage({ content: cleaned });
                 }
+
+                // ── Auto-send to Obsidian (fire-and-forget) ──
+                const finalText = counterType
+                    ? stripCounterTag(accumulated)
+                    : accumulated;
+                sendToObsidian(trimmed, finalText).catch(() => {
+                    /* handled inside sendToObsidian */
+                });
             } catch (err) {
                 if ((err as Error).name === "AbortError") {
                     logger.debug("Text chat aborted");

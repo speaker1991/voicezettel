@@ -69,7 +69,7 @@ function TokenDisplay({
     const parts: string[] = [];
     if (showUsd) parts.push(`$ ${usd.toFixed(2)}`);
     if (showRub) parts.push(`₽ ${rub.toFixed(2)}`);
-    if (showBalance) parts.push(`${balance} tok`);
+    if (showBalance) parts.push(`${balance} ток`);
 
     return (
         <motion.div
@@ -88,7 +88,7 @@ function TokenDisplay({
             </div>
             {/* Label below */}
             <span className="text-xs leading-none text-zinc-500">
-                Токены (live count)
+                Токены
             </span>
         </motion.div>
     );
@@ -110,28 +110,28 @@ export function TopCountersBar() {
     const badges: BadgeConfig[] = [
         {
             key: "ideas",
-            label: "Ideas",
+            label: "Идеи",
             icon: Lightbulb,
             getValue: () => ideas,
             showFlag: showIdeasCounter,
         },
         {
             key: "facts",
-            label: "Facts",
+            label: "Факты",
             icon: Heart,
             getValue: () => facts,
             showFlag: showFactsCounter,
         },
         {
             key: "persons",
-            label: "Persons",
+            label: "Персоны",
             icon: Users,
             getValue: () => persons,
             showFlag: showPersonsCounter,
         },
         {
             key: "tasks",
-            label: "Tasks",
+            label: "Задачи",
             icon: ListChecks,
             getValue: () => tasks,
             showFlag: showTasksCounter,

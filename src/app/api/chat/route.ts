@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ChatRequestSchema } from "./types";
+import { loadVaultContext } from "@/lib/vaultContext";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
@@ -106,9 +107,9 @@ async function streamGemini(
                             };
                         }>;
                     };
-                    const part = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const part =
+                        parsed.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (part) {
-                        // Emit in OpenAI-compatible format
                         const chunk = JSON.stringify({
                             choices: [
                                 { delta: { content: part }, index: 0 },
@@ -155,10 +156,19 @@ export async function POST(req: NextRequest) {
     }
 
     try {
+        // Load vault context (cached, ~15K chars of existing notes)
+        const vaultContext = await loadVaultContext();
+
+        // Build enriched system prompt with vault context
+        let enrichedPrompt = systemPrompt ?? "";
+        if (vaultContext) {
+            enrichedPrompt += `\n\n--- ЗАМЕТКИ ZETTELKASTEN (контекст из Obsidian) ---\nВот существующие заметки пользователя. Используй их как контекст для более релевантных ответов. Если пользователь спрашивает о чём-то связанном — ссылайся на эти заметки.\n${vaultContext}\n--- КОНЕЦ ЗАМЕТОК ---`;
+        }
+
         const stream =
             provider === "google"
-                ? await streamGemini(messages, systemPrompt)
-                : await streamOpenAI(messages, systemPrompt);
+                ? await streamGemini(messages, enrichedPrompt)
+                : await streamOpenAI(messages, enrichedPrompt);
 
         return new Response(stream, {
             headers: {

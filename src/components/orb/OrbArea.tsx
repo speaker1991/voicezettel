@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence, type PanInfo } from "framer-motion";
 import { ParticleOrb } from "@/components/orb/ParticleOrb";
 import { LavalierOrb } from "@/components/orb/LavalierOrb";
+import { AgentOrb } from "@/components/orb/AgentOrb";
 import { MeetingSummary } from "@/components/orb/MeetingSummary";
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -12,14 +13,15 @@ import { warmUpAudio } from "@/lib/sounds";
 import type { OrbState } from "@/types/chat";
 
 const STATE_LABELS: Record<OrbState, string> = {
-    idle: "Idle",
-    listening: "Listening…",
-    thinking: "Thinking…",
-    speaking: "Speaking…",
-    backgroundListening: "Background",
+    idle: "Ожидание",
+    listening: "Слушаю…",
+    thinking: "Думаю…",
+    speaking: "Говорю…",
+    backgroundListening: "Фоновый режим",
 };
 
-type OrbMode = "voice" | "lavalier";
+const MODES = ["voice", "lavalier", "agent"] as const;
+type OrbMode = (typeof MODES)[number];
 
 const SWIPE_THRESHOLD = 80;
 
@@ -32,6 +34,7 @@ export function OrbArea() {
     const [mode, setMode] = useState<OrbMode>("voice");
     const [showSummary, setShowSummary] = useState(false);
     const [showHint, setShowHint] = useState(true);
+    const [slideDir, setSlideDir] = useState<1 | -1>(1);
 
     // Auto-hide hint after 4 seconds
     useEffect(() => {
@@ -49,15 +52,27 @@ export function OrbArea() {
         }
     }, [isVoiceActive, startVoice, stopVoice]);
 
-    const handleDragEnd = useCallback(
-        (_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-            if (info.offset.x < -SWIPE_THRESHOLD && mode === "voice") {
-                setMode("lavalier");
-            } else if (info.offset.x > SWIPE_THRESHOLD && mode === "lavalier") {
-                setMode("voice");
-            }
+    const modeIndex = MODES.indexOf(mode);
+
+    const goToMode = useCallback(
+        (target: OrbMode) => {
+            const targetIdx = MODES.indexOf(target);
+            const currentIdx = MODES.indexOf(mode);
+            setSlideDir(targetIdx > currentIdx ? 1 : -1);
+            setMode(target);
         },
         [mode],
+    );
+
+    const handleDragEnd = useCallback(
+        (_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+            if (info.offset.x < -SWIPE_THRESHOLD && modeIndex < MODES.length - 1) {
+                goToMode(MODES[modeIndex + 1]);
+            } else if (info.offset.x > SWIPE_THRESHOLD && modeIndex > 0) {
+                goToMode(MODES[modeIndex - 1]);
+            }
+        },
+        [modeIndex, goToMode],
     );
 
     const handleEndMeeting = useCallback(() => {
@@ -74,14 +89,15 @@ export function OrbArea() {
                 onDragEnd={handleDragEnd}
                 style={{ touchAction: "pan-y" }}
             >
-                <AnimatePresence mode="wait">
-                    {mode === "voice" ? (
+                <AnimatePresence mode="wait" custom={slideDir}>
+                    {mode === "voice" && (
                         <motion.div
                             key="voice"
                             className="w-full"
-                            initial={{ x: -100, opacity: 0 }}
+                            custom={slideDir}
+                            initial={{ x: -100 * slideDir, opacity: 0 }}
                             animate={{ x: 0, opacity: 1 }}
-                            exit={{ x: -100, opacity: 0 }}
+                            exit={{ x: 100 * slideDir, opacity: 0 }}
                             transition={{ type: "spring", stiffness: 300, damping: 30 }}
                         >
                             <div
@@ -121,40 +137,51 @@ export function OrbArea() {
                                 </span>
                             </div>
                         </motion.div>
-                    ) : (
+                    )}
+
+                    {mode === "lavalier" && (
                         <motion.div
                             key="lavalier"
                             className="w-full"
-                            initial={{ x: 100, opacity: 0 }}
+                            custom={slideDir}
+                            initial={{ x: 100 * slideDir, opacity: 0 }}
                             animate={{ x: 0, opacity: 1 }}
-                            exit={{ x: 100, opacity: 0 }}
+                            exit={{ x: -100 * slideDir, opacity: 0 }}
                             transition={{ type: "spring", stiffness: 300, damping: 30 }}
                         >
                             <LavalierOrb onEndMeeting={handleEndMeeting} />
+                        </motion.div>
+                    )}
+
+                    {mode === "agent" && (
+                        <motion.div
+                            key="agent"
+                            className="w-full"
+                            custom={slideDir}
+                            initial={{ x: 100 * slideDir, opacity: 0 }}
+                            animate={{ x: 0, opacity: 1 }}
+                            exit={{ x: -100 * slideDir, opacity: 0 }}
+                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                        >
+                            <AgentOrb />
                         </motion.div>
                     )}
                 </AnimatePresence>
 
                 {/* Mode indicator dots */}
                 <div className="mt-1 flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => setMode("voice")}
-                        className={`size-1.5 rounded-full transition-all ${mode === "voice"
-                            ? "scale-125 bg-violet-500"
-                            : "bg-zinc-600 hover:bg-zinc-500"
-                            }`}
-                        aria-label="Voice mode"
-                    />
-                    <button
-                        type="button"
-                        onClick={() => setMode("lavalier")}
-                        className={`size-1.5 rounded-full transition-all ${mode === "lavalier"
-                            ? "scale-125 bg-violet-500"
-                            : "bg-zinc-600 hover:bg-zinc-500"
-                            }`}
-                        aria-label="Lavalier mode"
-                    />
+                    {MODES.map((m) => (
+                        <button
+                            key={m}
+                            type="button"
+                            onClick={() => goToMode(m)}
+                            className={`size-1.5 rounded-full transition-all ${mode === m
+                                ? "scale-125 bg-violet-500"
+                                : "bg-zinc-600 hover:bg-zinc-500"
+                                }`}
+                            aria-label={`${m} mode`}
+                        />
+                    ))}
                 </div>
             </motion.div>
 

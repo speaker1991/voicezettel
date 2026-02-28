@@ -36,6 +36,8 @@ export interface SettingsState {
     zettelkastenPrompt: string;
     aiProvider: AiProvider;
     aiVoiceEnabled: boolean;
+    obsidianApiKey: string;
+    obsidianApiUrl: string;
 }
 
 export interface SettingsActions {
@@ -51,4 +53,6 @@ export interface SettingsActions {
     setZettelkastenPrompt: (value: string) => void;
     setAiProvider: (provider: AiProvider) => void;
     toggleAiVoiceEnabled: () => void;
+    setObsidianApiKey: (key: string) => void;
+    setObsidianApiUrl: (url: string) => void;
 }
