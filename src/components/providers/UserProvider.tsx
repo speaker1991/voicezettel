@@ -50,30 +50,34 @@ export function UserProvider({
     children: ReactNode;
 }) {
     useEffect(() => {
-        // Rehydrate stores with user-specific keys
-        const chatKey = `voicezettel-chat-${userId}`;
-        const settingsKey = `voicezettel-settings-${userId}`;
+        try {
+            // Rehydrate stores with user-specific keys
+            const chatKey = `voicezettel-chat-${userId}`;
+            const settingsKey = `voicezettel-settings-${userId}`;
 
-        // Migrate from old non-scoped keys if needed
-        const oldChat = localStorage.getItem("voicezettel-chat");
-        const oldSettings = localStorage.getItem("voicezettel-settings");
+            // Migrate from old non-scoped keys if needed
+            const oldChat = localStorage.getItem("voicezettel-chat");
+            const oldSettings = localStorage.getItem("voicezettel-settings");
 
-        if (oldChat && !localStorage.getItem(chatKey)) {
-            localStorage.setItem(chatKey, oldChat);
-            localStorage.removeItem("voicezettel-chat");
+            if (oldChat && !localStorage.getItem(chatKey)) {
+                localStorage.setItem(chatKey, oldChat);
+                localStorage.removeItem("voicezettel-chat");
+            }
+            if (oldSettings && !localStorage.getItem(settingsKey)) {
+                localStorage.setItem(settingsKey, oldSettings);
+                localStorage.removeItem("voicezettel-settings");
+            }
+
+            // Update store names to user-scoped keys
+            useChatStore.persist.setOptions({ name: chatKey });
+            useSettingsStore.persist.setOptions({ name: settingsKey });
+
+            // Force rehydrate from new keys
+            void useChatStore.persist.rehydrate();
+            void useSettingsStore.persist.rehydrate();
+        } catch {
+            // localStorage may be unavailable (private browsing, etc.)
         }
-        if (oldSettings && !localStorage.getItem(settingsKey)) {
-            localStorage.setItem(settingsKey, oldSettings);
-            localStorage.removeItem("voicezettel-settings");
-        }
-
-        // Update store names to user-scoped keys
-        useChatStore.persist.setOptions({ name: chatKey });
-        useSettingsStore.persist.setOptions({ name: settingsKey });
-
-        // Force rehydrate from new keys
-        void useChatStore.persist.rehydrate();
-        void useSettingsStore.persist.rehydrate();
     }, [userId]);
 
     return (

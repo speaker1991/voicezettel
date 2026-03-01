@@ -344,7 +344,11 @@ export function ParticleOrb({
         const container = containerRef.current;
         if (!container) return;
 
-        init(container);
+        try {
+            init(container);
+        } catch {
+            // WebGL not available — CSS fallback remains visible
+        }
 
         const handleResize = () => {
             if (!sceneRef.current || !container) return;
@@ -385,6 +389,20 @@ export function ParticleOrb({
             role="button"
             tabIndex={0}
             aria-label="Toggle voice session"
-        />
+        >
+            {/* CSS fallback orb — visible even if WebGL fails */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div
+                    className="rounded-full"
+                    style={{
+                        width: "60%",
+                        height: "60%",
+                        background: "radial-gradient(circle, rgba(139,92,246,0.4) 0%, rgba(139,92,246,0.1) 50%, transparent 70%)",
+                        filter: "blur(8px)",
+                    }}
+                />
+            </div>
+        </div>
     );
 }
+
