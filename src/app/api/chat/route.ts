@@ -1,34 +1,270 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ChatRequestSchema } from "./types";
 import { loadVaultContext } from "@/lib/vaultContext";
+import {
+    saveMemory,
+    searchMemories,
+    getRecentMemories,
+} from "@/lib/memoryStore";
+import { logger } from "@/lib/logger";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
 
-// ── OpenAI streaming ─────────────────────────────────────────
-async function streamOpenAI(
-    messages: Array<{ role: string; content: string }>,
-    systemPrompt?: string,
-): Promise<ReadableStream<Uint8Array>> {
-    const body = {
-        model: "gpt-4o-mini",
-        stream: true,
-        stream_options: { include_usage: true },
-        messages: [
-            ...(systemPrompt
-                ? [{ role: "system" as const, content: systemPrompt }]
-                : []),
-            ...messages,
-        ],
-    };
+// ── Function calling tools ────────────────────────────────────
+const MEMORY_TOOLS = [
+    {
+        type: "function" as const,
+        function: {
+            name: "save_memory",
+            description:
+                "Сохранить важную информацию о пользователе в долговременную память. Используй когда пользователь делится личными предпочтениями, фактами о себе, своими целями, привычками, важными событиями или просит запомнить что-то.",
+            parameters: {
+                type: "object",
+                properties: {
+                    text: {
+                        type: "string",
+                        description:
+                            "Краткая суть того что нужно запомнить (1-2 предложения)",
+                    },
+                    tags: {
+                        type: "array",
+                        items: { type: "string" },
+                        description:
+                            "Теги для категоризации: preference, fact, goal, person, habit, event, idea",
+                    },
+                },
+                required: ["text", "tags"],
+            },
+        },
+    },
+    {
+        type: "function" as const,
+        function: {
+            name: "search_memory",
+            description:
+                "Поиск в памяти по запросу. Используй когда пользователь спрашивает что ты помнишь о нём, или когда нужно найти ранее сохранённую информацию.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description: "Поисковый запрос",
+                    },
+                },
+                required: ["query"],
+            },
+        },
+    },
+];
 
+// ── Build memory context ──────────────────────────────────────
+async function buildMemoryContext(
+    userId: string,
+    userMessage: string,
+): Promise<string> {
+    const parts: string[] = [];
+
+    // 1. Recent memories (preload)
+    const recent = await getRecentMemories(userId, 20);
+    if (recent.length > 0) {
+        parts.push("--- ДОЛГОВРЕМЕННАЯ ПАМЯТЬ (последние воспоминания) ---");
+        for (const mem of recent) {
+            const date = new Date(mem.createdAt).toLocaleDateString("ru-RU");
+            const tags = mem.tags.length > 0 ? ` [${mem.tags.join(", ")}]` : "";
+            parts.push(`• ${mem.text}${tags} (${date})`);
+        }
+        parts.push("--- КОНЕЦ ПАМЯТИ ---");
+    }
+
+    // 2. Semantic search for relevant memories
+    const relevant = await searchMemories(userId, userMessage);
+    if (relevant.length > 0) {
+        // Deduplicate with recent
+        const recentIds = new Set(recent.map((m) => m.id));
+        const unique = relevant.filter(
+            (r) => !recentIds.has(r.memory.id),
+        );
+
+        if (unique.length > 0) {
+            parts.push(
+                "\n--- РЕЛЕВАНТНЫЕ ВОСПОМИНАНИЯ (по запросу) ---",
+            );
+            for (const { memory, score } of unique) {
+                const date = new Date(memory.createdAt).toLocaleDateString(
+                    "ru-RU",
+                );
+                parts.push(
+                    `• ${memory.text} [${memory.tags.join(", ")}] (${date}, релевантность: ${(score * 100).toFixed(0)}%)`,
+                );
+            }
+            parts.push("--- КОНЕЦ РЕЛЕВАНТНЫХ ---");
+        }
+    }
+
+    return parts.join("\n");
+}
+
+// ── Handle function calls ─────────────────────────────────────
+interface ToolCall {
+    id: string;
+    function: {
+        name: string;
+        arguments: string;
+    };
+}
+
+async function handleToolCalls(
+    userId: string,
+    toolCalls: ToolCall[],
+): Promise<Array<{ role: string; tool_call_id: string; content: string }>> {
+    const results: Array<{
+        role: string;
+        tool_call_id: string;
+        content: string;
+    }> = [];
+
+    for (const tc of toolCalls) {
+        try {
+            const args = JSON.parse(tc.function.arguments) as Record<
+                string,
+                unknown
+            >;
+
+            if (tc.function.name === "save_memory") {
+                const text = args.text as string;
+                const tags = (args.tags as string[]) ?? [];
+                const memory = await saveMemory(userId, text, tags);
+                results.push({
+                    role: "tool",
+                    tool_call_id: tc.id,
+                    content: JSON.stringify({
+                        success: true,
+                        id: memory.id,
+                        text: memory.text,
+                    }),
+                });
+                logger.debug(`Memory saved via function call: "${text.slice(0, 50)}"`);
+            } else if (tc.function.name === "search_memory") {
+                const query = args.query as string;
+                const found = await searchMemories(userId, query);
+                results.push({
+                    role: "tool",
+                    tool_call_id: tc.id,
+                    content: JSON.stringify({
+                        results: found.map((r) => ({
+                            text: r.memory.text,
+                            tags: r.memory.tags,
+                            date: r.memory.createdAt,
+                            relevance: `${(r.score * 100).toFixed(0)}%`,
+                        })),
+                    }),
+                });
+                logger.debug(
+                    `Memory search: "${query}" → ${found.length} results`,
+                );
+            }
+        } catch (err) {
+            results.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify({
+                    error:
+                        err instanceof Error ? err.message : "Unknown error",
+                }),
+            });
+        }
+    }
+
+    return results;
+}
+
+// ── OpenAI with function calling (non-streaming first pass) ──
+async function callOpenAIWithTools(
+    userId: string,
+    messages: Array<{ role: string; content: string }>,
+    systemPrompt: string,
+): Promise<{
+    finalMessages: Array<Record<string, unknown>>;
+    needsStream: boolean;
+}> {
+    const apiMessages: Array<Record<string, unknown>> = [
+        { role: "system", content: systemPrompt },
+        ...messages,
+    ];
+
+    // First call: check if AI wants to call tools
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: apiMessages,
+            tools: MEMORY_TOOLS,
+            tool_choice: "auto",
+        }),
+    });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`OpenAI error ${res.status}: ${errText}`);
+    }
+
+    const data = (await res.json()) as {
+        choices?: Array<{
+            message?: {
+                role?: string;
+                content?: string | null;
+                tool_calls?: ToolCall[];
+            };
+            finish_reason?: string;
+        }>;
+    };
+
+    const choice = data.choices?.[0];
+    const assistantMessage = choice?.message;
+
+    if (choice?.finish_reason === "tool_calls" && assistantMessage?.tool_calls) {
+        // Execute tool calls
+        const toolResults = await handleToolCalls(userId, assistantMessage.tool_calls);
+
+        // Add assistant message with tool calls + tool results
+        apiMessages.push({
+            role: "assistant",
+            content: assistantMessage.content ?? null,
+            tool_calls: assistantMessage.tool_calls,
+        });
+
+        for (const result of toolResults) {
+            apiMessages.push(result);
+        }
+
+        return { finalMessages: apiMessages, needsStream: true };
+    }
+
+    // No tool calls — but we already got a response, need to re-stream
+    return { finalMessages: apiMessages, needsStream: true };
+}
+
+// ── OpenAI streaming ─────────────────────────────────────────
+async function streamOpenAI(
+    messages: Array<Record<string, unknown>>,
+): Promise<ReadableStream<Uint8Array>> {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: "gpt-4o-mini",
+            stream: true,
+            stream_options: { include_usage: true },
+            messages,
+        }),
     });
 
     if (!res.ok || !res.body) {
@@ -139,7 +375,7 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const { messages, provider, systemPrompt } = parsed.data;
+    const { messages, provider, systemPrompt, userId } = parsed.data;
 
     if (provider === "openai" && !OPENAI_API_KEY) {
         return NextResponse.json(
@@ -156,19 +392,53 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        // Load vault context (cached, ~15K chars of existing notes)
+        // Load vault context (cached, ~30K chars of existing notes)
         const vaultContext = await loadVaultContext();
 
-        // Build enriched system prompt with vault context
+        // Load memory context (recent + semantic search)
+        const lastUserMsg = [...messages]
+            .reverse()
+            .find((m) => m.role === "user");
+        const memoryContext = await buildMemoryContext(
+            userId,
+            lastUserMsg?.content ?? "",
+        );
+
+        // Build enriched system prompt
         let enrichedPrompt = systemPrompt ?? "";
+
+        enrichedPrompt += `\n\nТы имеешь доступ к долговременной памяти. Используй инструмент save_memory чтобы запомнить важную информацию о пользователе (предпочтения, факты, цели, привычки). Используй search_memory чтобы найти ранее сохранённую информацию. Активно запоминай новую информацию без просьбы пользователя.`;
+
+        if (memoryContext) {
+            enrichedPrompt += `\n\n${memoryContext}`;
+        }
+
         if (vaultContext) {
             enrichedPrompt += `\n\n--- ЗАМЕТКИ ZETTELKASTEN (контекст из Obsidian) ---\nВот существующие заметки пользователя. Используй их как контекст для более релевантных ответов. Если пользователь спрашивает о чём-то связанном — ссылайся на эти заметки.\n${vaultContext}\n--- КОНЕЦ ЗАМЕТОК ---`;
         }
 
-        const stream =
-            provider === "google"
-                ? await streamGemini(messages, enrichedPrompt)
-                : await streamOpenAI(messages, enrichedPrompt);
+        if (provider === "google") {
+            // Gemini doesn't support function calling the same way,
+            // just stream with enriched prompt
+            const stream = await streamGemini(messages, enrichedPrompt);
+            return new Response(stream, {
+                headers: {
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    Connection: "keep-alive",
+                },
+            });
+        }
+
+        // OpenAI: first pass with function calling (non-streaming)
+        const { finalMessages } = await callOpenAIWithTools(
+            userId,
+            messages,
+            enrichedPrompt,
+        );
+
+        // Second pass: stream the final response
+        const stream = await streamOpenAI(finalMessages);
 
         return new Response(stream, {
             headers: {

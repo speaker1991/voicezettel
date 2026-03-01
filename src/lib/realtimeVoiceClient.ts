@@ -27,6 +27,7 @@ export class RealtimeVoiceClient {
     private assistantTranscript = "";
     private ephemeralToken = "";
     private callbacks: VoiceClientCallbacks;
+    private contextStr = "";
 
     constructor(callbacks: VoiceClientCallbacks) {
         this.callbacks = callbacks;
@@ -34,7 +35,10 @@ export class RealtimeVoiceClient {
 
     // ── Public API ───────────────────────────────────────────
 
-    async start(): Promise<void> {
+    async start(context?: string): Promise<void> {
+        // Save context for session config
+        this.contextStr = context ?? "";
+
         // 1. Fetch ephemeral token from our server route
         this.ephemeralToken = await this.fetchEphemeralToken();
 
@@ -227,21 +231,24 @@ export class RealtimeVoiceClient {
             type: "session.update",
             session: {
                 modalities: ["text", "audio"],
-                instructions: `Ты — помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-2 предложения. Не повторяй вопрос пользователя.
+                instructions: `Ты — Экзокортекс, голосовой ИИ-помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
 
-Если пользователь просит создать/записать/запомнить что-то, определи категорию и добавь тег в конец ответа:
-- Задачи, заметки, напоминания, дела → [COUNTER:tasks]
-- Идеи, мысли, предложения, концепты → [COUNTER:ideas]
-- Факты, знания, информация, определения → [COUNTER:facts]
-- Люди, контакты, персоны, имена → [COUNTER:persons]
+Твои принципы:
+- Радар ценности: Вылавливай инсайты и неочевидные выводы.
+- Если пользователь делится мыслью — запомни и предложи развить.
+- Если пользователь просит создать/записать/запомнить что-то, добавь тег:
+  - Задачи, заметки → [COUNTER:tasks]
+  - Идеи, мысли → [COUNTER:ideas]
+  - Факты, знания → [COUNTER:facts]
+  - Люди, контакты → [COUNTER:persons]
 
-Пример: "Заметка создана! [COUNTER:tasks]"
-Не добавляй тег если пользователь просто разговаривает или задаёт вопрос.
+Пример: "Записал! [COUNTER:tasks]"
+Не добавляй тег если пользователь просто разговаривает.
 
-Последние обновления приложения VoiceZettel:
+Последние обновления:
 ${changelogContext}
 
-Если пользователь спросит "что нового", "какие обновления", "расскажи об изменениях" — расскажи об этих обновлениях кратко и понятно.`,
+${this.contextStr}`,
                 input_audio_transcription: {
                     model: "whisper-1",
                     language: "ru",

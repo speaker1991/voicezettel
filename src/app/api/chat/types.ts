@@ -9,6 +9,7 @@ export const ChatRequestSchema = z.object({
     ),
     provider: z.enum(["openai", "google"]).default("openai"),
     systemPrompt: z.string().optional(),
+    userId: z.string().default("anonymous"),
 });
 
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;

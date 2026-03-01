@@ -10,11 +10,13 @@ import { useAnimationStore } from "@/stores/animationStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
+import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
 
 export function useVoiceSession() {
     const clientRef = useRef<RealtimeVoiceClient | null>(null);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
+    const { userId } = useUser();
 
     const addMessage = useChatStore((s) => s.addMessage);
     const updateLastAssistantMessage = useChatStore(
@@ -162,7 +164,30 @@ export function useVoiceSession() {
         clientRef.current = client;
 
         try {
-            await client.start();
+            // Fetch context (memory + vault + chat) for voice instructions
+            let voiceContext = "";
+            try {
+                const msgs = useChatStore.getState().messages;
+                const recentMessages = msgs.slice(-10).map((m) => ({
+                    role: m.role,
+                    content: m.content,
+                }));
+
+                const ctxRes = await fetch("/api/voice-context", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userId, recentMessages }),
+                });
+
+                if (ctxRes.ok) {
+                    const ctxData = (await ctxRes.json()) as { context?: string };
+                    voiceContext = ctxData.context ?? "";
+                }
+            } catch {
+                // Context fetch failed silently — voice still works
+            }
+
+            await client.start(voiceContext);
             setIsVoiceActive(true);
         } catch (err) {
             logger.error(
@@ -180,6 +205,7 @@ export function useVoiceSession() {
             setModality("text");
         }
     }, [
+        userId,
         addMessage,
         updateLastAssistantMessage,
         insertMessageBeforeLastAssistant,

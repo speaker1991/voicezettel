@@ -47,6 +47,29 @@ async function putToLocalObsidian(
     }
 }
 
+// ── Deduplication guard ──────────────────────────────────────
+const recentSends: Map<string, number> = new Map();
+const DEDUP_WINDOW_MS = 30_000; // 30 seconds
+
+function isDuplicate(userText: string, assistantText: string): boolean {
+    // Simple hash from content
+    const key = `${userText.slice(0, 100)}|${assistantText.slice(0, 100)}`;
+    const now = Date.now();
+
+    // Clean old entries
+    for (const [k, ts] of recentSends) {
+        if (now - ts > DEDUP_WINDOW_MS) recentSends.delete(k);
+    }
+
+    if (recentSends.has(key)) {
+        logger.debug("Zettelkasten: duplicate detected, skipping");
+        return true;
+    }
+
+    recentSends.set(key, now);
+    return false;
+}
+
 /**
  * Send dialog to server for Zettelkasten processing.
  * Server writes to VAULT_PATH if configured (owner).
@@ -56,6 +79,9 @@ export async function sendToObsidian(
     userText: string,
     assistantText: string,
 ): Promise<void> {
+    // Skip duplicates within 30 seconds
+    if (isDuplicate(userText, assistantText)) return;
+
     const { aiProvider, obsidianApiKey, obsidianApiUrl } =
         useSettingsStore.getState();
 

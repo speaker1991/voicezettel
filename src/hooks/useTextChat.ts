@@ -8,6 +8,7 @@ import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
+import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
 
 export function useTextChat() {
@@ -17,6 +18,7 @@ export function useTextChat() {
     );
     const setOrbState = useChatStore((s) => s.setOrbState);
     const abortRef = useRef<AbortController | null>(null);
+    const { userId } = useUser();
 
     const sendMessage = useCallback(
         async (userText: string) => {
@@ -68,6 +70,7 @@ export function useTextChat() {
                         messages: history,
                         provider: aiProvider,
                         systemPrompt,
+                        userId,
                     }),
                     signal: abortRef.current.signal,
                 });
