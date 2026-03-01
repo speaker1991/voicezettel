@@ -166,3 +166,52 @@ export async function getMemoryCount(userId: string): Promise<number> {
     await ensureLoaded(userId);
     return getStore(userId).size;
 }
+
+/**
+ * Preload notes from vault into memory store (for semantic search).
+ * Skips notes that already exist in memory (by text prefix match).
+ */
+export async function preloadFromVault(
+    userId: string,
+    notes: Array<{ title: string; content: string }>,
+): Promise<number> {
+    await ensureLoaded(userId);
+
+    const store = getStore(userId);
+    const existingTexts = new Set(
+        Array.from(store.values()).map((m) => m.text.slice(0, 80)),
+    );
+
+    let added = 0;
+
+    for (const note of notes) {
+        const memText = `Заметка: ${note.title} — ${note.content.slice(0, 200)}`;
+        const prefix = memText.slice(0, 80);
+
+        // Skip if already in store
+        if (existingTexts.has(prefix)) continue;
+
+        try {
+            const embedding = await generateEmbedding(memText);
+            const memory: Memory = {
+                id: crypto.randomUUID(),
+                text: memText,
+                tags: ["vault", "preloaded"],
+                createdAt: new Date().toISOString(),
+                embedding,
+            };
+            store.set(memory.id, memory);
+            existingTexts.add(prefix);
+            added++;
+        } catch {
+            // Skip notes that fail embedding
+        }
+    }
+
+    if (added > 0) {
+        scheduleSave(userId);
+        logger.debug(`Memory [${userId}]: preloaded ${added} notes from vault`);
+    }
+
+    return added;
+}

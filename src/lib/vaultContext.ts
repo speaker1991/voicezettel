@@ -105,3 +105,44 @@ export async function loadVaultContext(): Promise<string> {
         return "";
     }
 }
+
+/**
+ * Load vault notes as structured {title, content} pairs.
+ * Used for preloading into memory store.
+ */
+export async function loadVaultNotes(): Promise<
+    Array<{ title: string; content: string }>
+> {
+    if (!VAULT_PATH) return [];
+
+    try {
+        const files = await collectMdFiles(VAULT_PATH);
+        const notes: Array<{ title: string; content: string }> = [];
+
+        for (const filePath of files) {
+            try {
+                const content = await readFile(filePath, "utf-8");
+                // Extract title from heading or filename
+                const headingMatch = /^#\s+(.+)$/m.exec(content);
+                const fileName = filePath
+                    .replace(/\\/g, "/")
+                    .split("/")
+                    .pop()
+                    ?.replace(".md", "");
+                const title =
+                    headingMatch?.[1] ?? fileName ?? "Untitled";
+
+                // Skip very short or empty notes
+                if (content.trim().length < 20) continue;
+
+                notes.push({ title, content: content.trim() });
+            } catch {
+                // Skip unreadable files
+            }
+        }
+
+        return notes;
+    } catch {
+        return [];
+    }
+}

@@ -4,6 +4,7 @@ import { ChatArea } from "@/components/chat/ChatArea";
 import { OrbArea } from "@/components/orb/OrbArea";
 import { InputBar } from "@/components/input/InputBar";
 import { AnimationOverlay } from "@/components/counters/FlyingIcon";
+import { ArchiveButton } from "@/components/chat/ArchiveButton";
 import { UserProvider } from "@/components/providers/UserProvider";
 import { auth } from "@/lib/auth";
 
@@ -23,6 +24,10 @@ export default async function Home() {
           <TopCountersBar />
 
           <OrbArea />
+
+          <div className="flex items-center justify-end py-1">
+            <ArchiveButton />
+          </div>
 
           <ChatArea />
 
