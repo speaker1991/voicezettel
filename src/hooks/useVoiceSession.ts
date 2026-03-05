@@ -62,13 +62,10 @@ export function useVoiceSession() {
         setOrbState("listening"); // Show listening while connecting
 
         // Create Edge TTS audio element during user gesture (mobile autoplay compat)
-        let edgeTtsAudioEl: HTMLAudioElement | null = null;
-        if (useEdge) {
-            edgeTtsAudioEl = document.createElement("audio");
-            edgeTtsAudioEl.setAttribute("playsinline", "true");
-            edgeTtsAudioEl.style.display = "none";
-            document.body.appendChild(edgeTtsAudioEl);
-        }
+        const edgeTtsAudioEl = document.createElement("audio");
+        edgeTtsAudioEl.setAttribute("playsinline", "true");
+        edgeTtsAudioEl.style.display = "none";
+        document.body.appendChild(edgeTtsAudioEl);
 
         const callbacks: VoiceClientCallbacks = {
             onConnected: () => {
@@ -146,8 +143,8 @@ export function useVoiceSession() {
                     updateLastAssistantMessage({ content: cleaned });
                 }
 
-                // ── Edge TTS overlay: speak after OpenAI audio finishes ──
-                if (useEdge && lastAssistantText.current) {
+                // ── Edge TTS: speak the response ──
+                if (lastAssistantText.current) {
                     const textToSpeak = counterType
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
