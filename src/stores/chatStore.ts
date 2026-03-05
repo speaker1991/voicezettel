@@ -2,11 +2,14 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Message, OrbState, ModalityMode } from "@/types/chat";
 
+export type OrbMode = "voice" | "lavalier" | "agent";
+
 interface ChatState {
     messages: Message[];
     orbState: OrbState;
     modality: ModalityMode;
     audioLevel: number;
+    orbMode: OrbMode;
     sessionId?: string;
 }
 
@@ -17,6 +20,7 @@ interface ChatActions {
     setOrbState: (state: OrbState) => void;
     setModality: (mode: ModalityMode) => void;
     setAudioLevel: (level: number) => void;
+    setOrbMode: (mode: OrbMode) => void;
     clearMessages: () => void;
 }
 
@@ -37,6 +41,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
             orbState: "idle",
             modality: "voice",
             audioLevel: 0,
+            orbMode: "voice" as OrbMode,
             sessionId: undefined,
 
             addMessage: (message) =>
@@ -71,14 +76,22 @@ export const useChatStore = create<ChatState & ChatActions>()(
             setOrbState: (orbState) => set({ orbState }),
             setModality: (modality) => set({ modality }),
             setAudioLevel: (audioLevel) => set({ audioLevel }),
+            setOrbMode: (orbMode) => set({ orbMode }),
             clearMessages: () => set({ messages: SEED_MESSAGES }),
         }),
         {
             name: "voicezettel-chat",
-            // Only persist messages, not transient UI state
+            // Only persist orbMode, NOT messages — chat resets on refresh
             partialize: (state) => ({
-                messages: state.messages,
+                orbMode: state.orbMode,
             }),
+            version: 1,
+            migrate: (persisted) => {
+                const state = persisted as Record<string, unknown>;
+                // Drop persisted messages — chat starts fresh each session
+                delete state.messages;
+                return state;
+            },
         },
     ),
 );

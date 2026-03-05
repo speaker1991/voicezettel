@@ -16,6 +16,7 @@ export interface VoiceClientCallbacks {
     onConnected: () => void;
     onUserSpeechStarted: () => void;
     onUserSpeechStopped: () => void;
+    onTokenUsage?: (usage: { textIn: number; textOut: number; audioIn: number; audioOut: number }) => void;
 }
 
 // ── Client class ─────────────────────────────────────────────
@@ -26,6 +27,7 @@ export class RealtimeVoiceClient {
     private audioEl: HTMLAudioElement | null = null;
     private assistantTranscript = "";
     private ephemeralToken = "";
+    private _savedAudioTrack: MediaStreamTrack | null = null;
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
 
@@ -153,23 +155,44 @@ export class RealtimeVoiceClient {
         this.assistantTranscript = "";
     }
 
-    /** Mute local mic (while AI speaks to prevent echo) */
+    /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */
     muteMic(): void {
-        if (this.localStream) {
-            for (const track of this.localStream.getAudioTracks()) {
-                track.enabled = false;
+        if (!this.pc || !this.localStream) return;
+
+        // Layer 1: Replace the RTP sender track with null (stops sending audio)
+        for (const sender of this.pc.getSenders()) {
+            if (sender.track?.kind === "audio") {
+                this._savedAudioTrack = sender.track;
+                sender.replaceTrack(null).catch(() => { /* silent */ });
             }
+        }
+
+        // Layer 2: Also disable the track (for browsers that support it)
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = false;
         }
     }
 
-    /** Unmute local mic */
+    /** Re-enable mic when AI stops speaking */
     unmuteMic(): void {
-        if (this.localStream) {
-            for (const track of this.localStream.getAudioTracks()) {
-                track.enabled = true;
+        if (!this.pc || !this.localStream) return;
+
+        // Layer 1: Restore the saved audio track to the sender
+        if (this._savedAudioTrack) {
+            for (const sender of this.pc.getSenders()) {
+                if (sender.track === null || sender.track?.kind === "audio") {
+                    sender.replaceTrack(this._savedAudioTrack).catch(() => { /* silent */ });
+                }
             }
+            this._savedAudioTrack = null;
+        }
+
+        // Layer 2: Re-enable the track
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = true;
         }
     }
+
 
     sendText(text: string): void {
         if (!this.dc || this.dc.readyState !== "open") {
@@ -255,9 +278,9 @@ ${this.contextStr}`,
                 },
                 turn_detection: {
                     type: "server_vad",
-                    threshold: 0.7,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 1200,
+                    threshold: 0.95,
+                    prefix_padding_ms: 400,
+                    silence_duration_ms: 2000,
                 },
             },
         };
@@ -307,6 +330,19 @@ ${this.contextStr}`,
             case "response.audio.done":
                 this.callbacks.onAudioEnd();
                 break;
+
+            case "response.done": {
+                // Extract token usage from response.done event
+                const usage = parsed.response?.usage;
+                if (usage && this.callbacks.onTokenUsage) {
+                    const textIn = usage.input_token_details?.text_tokens ?? usage.input_tokens ?? 0;
+                    const textOut = usage.output_token_details?.text_tokens ?? usage.output_tokens ?? 0;
+                    const audioIn = usage.input_token_details?.audio_tokens ?? 0;
+                    const audioOut = usage.output_token_details?.audio_tokens ?? 0;
+                    this.callbacks.onTokenUsage({ textIn, textOut, audioIn, audioOut });
+                }
+                break;
+            }
 
             case "error":
                 this.callbacks.onSessionError(

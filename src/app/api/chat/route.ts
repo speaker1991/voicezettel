@@ -8,10 +8,12 @@ import {
     preloadFromVault,
 } from "@/lib/memoryStore";
 import { writeNoteToVault } from "@/lib/vaultWriter";
+import { classifyAndSave } from "@/lib/messageClassifier";
 import { logger } from "@/lib/logger";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
 // ── Function calling tools ────────────────────────────────────
 const MEMORY_TOOLS = [
@@ -389,6 +391,32 @@ async function streamOpenAI(
     return res.body;
 }
 
+// ── DeepSeek streaming (OpenAI-compatible) ───────────────────
+async function streamDeepSeek(
+    messages: Array<Record<string, unknown>>,
+): Promise<ReadableStream<Uint8Array>> {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: "deepseek-chat",
+            stream: true,
+            stream_options: { include_usage: true },
+            messages,
+        }),
+    });
+
+    if (!res.ok || !res.body) {
+        const errText = await res.text();
+        throw new Error(`DeepSeek error ${res.status}: ${errText}`);
+    }
+
+    return res.body;
+}
+
 // ── Google Gemini streaming ──────────────────────────────────
 async function streamGemini(
     messages: Array<{ role: string; content: string }>,
@@ -478,6 +506,74 @@ async function streamGemini(
 }
 
 // ── Route handler ────────────────────────────────────────────
+// ── Append classification counter tags to SSE stream ─────────
+function appendCounterTags(
+    baseStream: ReadableStream<Uint8Array>,
+    classifyPromise: Promise<{ counterTags: string[] }>,
+): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    return new ReadableStream<Uint8Array>({
+        async start(controller) {
+            const reader = baseStream.getReader();
+            let buffer = "";
+
+            // Pipe base stream through, intercepting [DONE]
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    // Decode chunk, check for [DONE]
+                    const text = decoder.decode(value, { stream: true });
+                    buffer += text;
+
+                    // Split into complete SSE messages
+                    const parts = buffer.split("\n\n");
+                    buffer = parts.pop() ?? "";
+
+                    for (const part of parts) {
+                        const trimmed = part.trim();
+                        if (trimmed === "data: [DONE]") continue; // skip, we'll add our own
+                        if (trimmed) {
+                            controller.enqueue(encoder.encode(trimmed + "\n\n"));
+                        }
+                    }
+                }
+
+                // Flush remaining buffer (except [DONE])
+                if (buffer.trim() && buffer.trim() !== "data: [DONE]") {
+                    controller.enqueue(encoder.encode(buffer));
+                }
+            } catch {
+                // stream interrupted
+            }
+
+            // After main stream ends, append counter tags if any
+            try {
+                const result = await classifyPromise;
+                if (result.counterTags.length > 0) {
+                    const tagStr = " " + result.counterTags.join(" ");
+                    const chunk = JSON.stringify({
+                        choices: [
+                            { delta: { content: tagStr }, index: 0 },
+                        ],
+                    });
+                    controller.enqueue(
+                        encoder.encode(`data: ${chunk}\n\n`),
+                    );
+                }
+            } catch {
+                // classifier failed — no tags, no problem
+            }
+
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+        },
+    });
+}
+
 export async function POST(req: NextRequest) {
     const raw: unknown = await req.json();
     const parsed = ChatRequestSchema.safeParse(raw);
@@ -530,11 +626,35 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        enrichedPrompt += `\n\nТы имеешь доступ к долговременной памяти и инструментам:
+        enrichedPrompt += `\n\n## ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА (СТРОГО СЛЕДУЙ):
+
+### 1. Автоматическое создание заметок
+Ты ОБЯЗАН вызвать create_zettel КАЖДЫЙ раз, когда в сообщении пользователя есть:
+- Идея, мысль, инсайт → noteType: "idea"
+- Факт, данные, цифры, информация → noteType: "fact"  
+- Задача, план, намерение ("нужно", "стоит", "надо") → noteType: "task"
+- Упоминание человека с контекстом → noteType: "persona"
+
+Одно сообщение может содержать НЕСКОЛЬКО элементов — вызови create_zettel для КАЖДОГО отдельно!
+НЕ СПРАШИВАЙ разрешения — ПРОСТО СОЗДАВАЙ заметку.
+
+Пример: "Обновление Figma добавило новые auto-layout-функции, стоит пересмотреть шаблоны"
+→ Вызвать create_zettel (fact): "Figma добавила новые auto-layout-функции"
+→ Вызвать create_zettel (task): "Пересмотреть шаблоны для новых auto-layout-функций Figma"
+
+### 2. Счётчики
+После создания заметки добавь в свой ответ тег:
+- Идеи → [COUNTER:ideas]
+- Факты → [COUNTER:facts]
+- Задачи → [COUNTER:tasks]
+- Люди → [COUNTER:persons]
+
+Пример ответа: "Записал факт о Figma и создал задачу по шаблонам! [COUNTER:facts] [COUNTER:tasks]"
+
+### 3. Память
 - save_memory — запомнить важную информацию о пользователе
 - search_memory — найти ранее сохранённую информацию
-- create_zettel — создать структурированную заметку Zettelkasten в Obsidian (идея, факт, задача, персона)
-Активно запоминай новую информацию. Если пользователь делится идеей, инсайтом или задачей — используй create_zettel для создания атомарной заметки.`;
+Активно запоминай ВСЮ новую информацию без просьбы.`;
 
         if (memoryContext) {
             enrichedPrompt += `\n\n${memoryContext}`;
@@ -544,11 +664,69 @@ export async function POST(req: NextRequest) {
             enrichedPrompt += `\n\n--- ЗАМЕТКИ ZETTELKASTEN (контекст из Obsidian) ---\nВот существующие заметки пользователя. Используй их как контекст для более релевантных ответов. Если пользователь спрашивает о чём-то связанном — ссылайся на эти заметки.\n${vaultContext}\n--- КОНЕЦ ЗАМЕТОК ---`;
         }
 
+        // ── Auto-save user message to memory (fire-and-forget) ──
+        const lastUserMsgForMem = messages
+            .filter((m) => m.role === "user")
+            .pop();
+        if (lastUserMsgForMem && lastUserMsgForMem.content.trim().length > 10) {
+            saveMemory(
+                userId,
+                `Пользователь написал: ${lastUserMsgForMem.content.slice(0, 300)}`,
+                ["chat", "user-said"],
+            ).catch(() => { /* silent */ });
+        }
+
+        // Get the last user message for classification
+        const classifyMsg = messages
+            .filter((m) => m.role === "user")
+            .pop();
+        const classifyPromise = classifyMsg
+            ? classifyAndSave(userId, classifyMsg.content)
+            : Promise.resolve({ items: [], counterTags: [] });
+
         if (provider === "google") {
-            // Gemini doesn't support function calling the same way,
-            // just stream with enriched prompt
-            const stream = await streamGemini(messages, enrichedPrompt);
-            return new Response(stream, {
+            try {
+                const baseStream = await streamGemini(messages, enrichedPrompt);
+                const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                return new Response(taggedStream, {
+                    headers: {
+                        "Content-Type": "text/event-stream",
+                        "Cache-Control": "no-cache",
+                        Connection: "keep-alive",
+                    },
+                });
+            } catch (geminiErr) {
+                // Fallback to DeepSeek if Gemini quota exceeded (429)
+                const errMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+                logger.warn(`Gemini failed: ${errMsg.slice(0, 100)}`);
+                if (DEEPSEEK_API_KEY) {
+                    logger.warn("Falling back to DeepSeek...");
+                    const simpleMessages = [
+                        { role: "system", content: enrichedPrompt },
+                        ...messages.map((m) => ({ role: m.role, content: m.content })),
+                    ];
+                    const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
+                    const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                    return new Response(taggedStream, {
+                        headers: {
+                            "Content-Type": "text/event-stream",
+                            "Cache-Control": "no-cache",
+                            Connection: "keep-alive",
+                        },
+                    });
+                }
+                throw geminiErr;
+            }
+        }
+
+        if (provider === "deepseek") {
+            const simpleMessages = [
+                { role: "system", content: enrichedPrompt },
+                ...messages.map((m) => ({ role: m.role, content: m.content })),
+            ];
+            const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
+            const taggedStream = appendCounterTags(baseStream, classifyPromise);
+            return new Response(taggedStream, {
                 headers: {
                     "Content-Type": "text/event-stream",
                     "Cache-Control": "no-cache",
@@ -558,22 +736,69 @@ export async function POST(req: NextRequest) {
         }
 
         // OpenAI: first pass with function calling (non-streaming)
-        const { finalMessages } = await callOpenAIWithTools(
-            userId,
-            messages,
-            enrichedPrompt,
-        );
+        try {
+            const { finalMessages } = await callOpenAIWithTools(
+                userId,
+                messages,
+                enrichedPrompt,
+            );
 
-        // Second pass: stream the final response
-        const stream = await streamOpenAI(finalMessages);
+            // Second pass: stream the final response
+            const baseStream = await streamOpenAI(finalMessages);
+            const taggedStream = appendCounterTags(baseStream, classifyPromise);
 
-        return new Response(stream, {
-            headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive",
-            },
-        });
+            return new Response(taggedStream, {
+                headers: {
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    Connection: "keep-alive",
+                },
+            });
+        } catch (openaiErr) {
+            // ── Fallback chain if OpenAI is blocked (403/country) ──
+            const errMsg = openaiErr instanceof Error ? openaiErr.message : "";
+            const isBlocked = errMsg.includes("403") || errMsg.includes("unsupported_country");
+
+            if (!isBlocked) throw openaiErr;
+
+            // Fallback 1: DeepSeek (works without VPN from Russia)
+            if (DEEPSEEK_API_KEY) {
+                try {
+                    logger.warn("OpenAI blocked (403), falling back to DeepSeek");
+                    const simpleMessages = [
+                        { role: "system", content: enrichedPrompt },
+                        ...messages.map((m) => ({ role: m.role, content: m.content })),
+                    ];
+                    const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
+                    const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                    return new Response(taggedStream, {
+                        headers: {
+                            "Content-Type": "text/event-stream",
+                            "Cache-Control": "no-cache",
+                            Connection: "keep-alive",
+                        },
+                    });
+                } catch (deepseekErr) {
+                    logger.warn("DeepSeek also failed:", (deepseekErr as Error).message);
+                }
+            }
+
+            // Fallback 2: Gemini
+            if (GOOGLE_GEMINI_API_KEY) {
+                logger.warn("Falling back to Gemini");
+                const baseStream = await streamGemini(messages, enrichedPrompt);
+                const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                return new Response(taggedStream, {
+                    headers: {
+                        "Content-Type": "text/event-stream",
+                        "Cache-Control": "no-cache",
+                        Connection: "keep-alive",
+                    },
+                });
+            }
+
+            throw openaiErr; // no fallback available
+        }
     } catch (err) {
         const message =
             err instanceof Error ? err.message : "Unexpected error";

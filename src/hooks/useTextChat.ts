@@ -6,7 +6,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useAnimationStore } from "@/stores/animationStore";
 import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
-import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
+import { detectCounterTypes, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
@@ -92,6 +92,9 @@ export function useTextChat() {
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let accumulated = "";
+                let streamModel = "";
+                let streamPromptTokens = 0;
+                let streamCompletionTokens = 0;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -110,6 +113,7 @@ export function useTextChat() {
                                 choices?: Array<{
                                     delta?: { content?: string };
                                 }>;
+                                model?: string;
                                 usage?: {
                                     prompt_tokens?: number;
                                     completion_tokens?: number;
@@ -117,13 +121,15 @@ export function useTextChat() {
                                 };
                             };
 
+                            // Track model name from first chunk
+                            if (parsed.model && !streamModel) {
+                                streamModel = parsed.model;
+                            }
+
                             // Track token usage (comes in the final chunk)
-                            if (parsed.usage?.total_tokens) {
-                                useCountersStore
-                                    .getState()
-                                    .addTokensUsed(
-                                        parsed.usage.total_tokens,
-                                    );
+                            if (parsed.usage) {
+                                streamPromptTokens = parsed.usage.prompt_tokens ?? 0;
+                                streamCompletionTokens = parsed.usage.completion_tokens ?? 0;
                             }
 
                             const content =
@@ -140,19 +146,32 @@ export function useTextChat() {
                     }
                 }
 
-                // Detect counter type and trigger animation
-                const counterType = detectCounterType(accumulated);
-                if (counterType) {
-                    useAnimationStore
-                        .getState()
-                        .triggerAnimation(counterType);
-                    // Strip tag from displayed message
+                // Report token usage to server (fire-and-forget)
+                if (streamPromptTokens > 0 || streamCompletionTokens > 0) {
+                    const reportModel = streamModel || (useSettingsStore.getState().aiProvider === "google" ? "gemini-2.0-flash" : "gpt-4o-mini");
+                    useCountersStore.getState().reportTokenUsage(
+                        userId ?? "",
+                        reportModel,
+                        streamPromptTokens,
+                        streamCompletionTokens,
+                    ).catch(() => { /* silent */ });
+                }
+
+                // Detect counter types and trigger animations
+                const counterTypes = detectCounterTypes(accumulated);
+                if (counterTypes.length > 0) {
+                    for (const ct of counterTypes) {
+                        useAnimationStore
+                            .getState()
+                            .triggerAnimation(ct);
+                    }
+                    // Strip tags from displayed message
                     const cleaned = stripCounterTag(accumulated);
                     updateLastAssistantMessage({ content: cleaned });
                 }
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──
-                const finalText = counterType
+                const finalText = counterTypes.length > 0
                     ? stripCounterTag(accumulated)
                     : accumulated;
                 sendToObsidian(trimmed, finalText).catch(() => {

@@ -260,6 +260,20 @@ export function SettingsPanel({
                                         </button>
                                         <button
                                             className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.aiProvider ===
+                                                "deepseek"
+                                                ? "bg-violet-600 text-white"
+                                                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                }`}
+                                            onClick={() =>
+                                                settings.setAiProvider(
+                                                    "deepseek",
+                                                )
+                                            }
+                                        >
+                                            DeepSeek
+                                        </button>
+                                        <button
+                                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.aiProvider ===
                                                 "google"
                                                 ? "bg-violet-600 text-white"
                                                 : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"

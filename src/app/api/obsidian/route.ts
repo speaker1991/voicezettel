@@ -5,6 +5,7 @@ import { join } from "path";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const OBSIDIAN_REST_URL = process.env.OBSIDIAN_REST_URL;
 const OBSIDIAN_API_KEY = process.env.OBSIDIAN_API_KEY;
 const VAULT_PATH = process.env.VAULT_PATH;
@@ -100,7 +101,7 @@ async function writeNoteToVault(
     // Method 1: Direct filesystem write (fastest, most reliable)
     if (VAULT_PATH) {
         try {
-            const zettelDir = join(VAULT_PATH, "10_Zettels");
+            const zettelDir = join(VAULT_PATH, "Zettelkasten");
             await mkdir(zettelDir, { recursive: true });
             const filePath = join(zettelDir, filename);
             await writeFile(filePath, content, "utf-8");
@@ -133,7 +134,7 @@ async function writeViaRestApi(
     filename: string,
     content: string,
 ): Promise<{ success: boolean; error?: string; method: string }> {
-    const path = `10_Zettels/${filename}`;
+    const path = `Zettelkasten/${filename}`;
     const url = `${OBSIDIAN_REST_URL}/vault/${encodeURIComponent(path)}`;
 
     try {
@@ -165,11 +166,37 @@ async function writeViaRestApi(
     }
 }
 
-// ── Call GPT/Gemini for Zettelkasten processing ──────────────
+// ── DeepSeek helper (OpenAI-compatible) ──────────────────────
+async function processWithDeepSeek(dialogContext: string): Promise<string> {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: [
+                { role: "system", content: ZETTELKASTEN_SYSTEM_PROMPT },
+                { role: "user", content: dialogContext },
+            ],
+            temperature: 0.7,
+        }),
+    });
+
+    if (!res.ok) throw new Error(`DeepSeek error ${res.status}`);
+
+    const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+    };
+    return data.choices?.[0]?.message?.content ?? "SKIP";
+}
+
+// ── Call GPT/Gemini/DeepSeek for Zettelkasten processing ─────
 async function processWithAI(
     userText: string,
     assistantText: string,
-    provider: "openai" | "google",
+    provider: "openai" | "google" | "deepseek",
 ): Promise<string> {
     const dialogContext = `Пользователь сказал: "${userText}"\n\nОтвет ассистента: "${assistantText}"`;
 
@@ -189,7 +216,13 @@ async function processWithAI(
             }),
         });
 
-        if (!res.ok) throw new Error(`Gemini error ${res.status}`);
+        if (!res.ok) {
+            // Fallback to DeepSeek if Gemini fails
+            if (DEEPSEEK_API_KEY) {
+                return processWithDeepSeek(dialogContext);
+            }
+            throw new Error(`Gemini error ${res.status}`);
+        }
 
         const data = (await res.json()) as {
             candidates?: Array<{
@@ -197,6 +230,11 @@ async function processWithAI(
             }>;
         };
         return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "SKIP";
+    }
+
+    // DeepSeek path
+    if (provider === "deepseek" && DEEPSEEK_API_KEY) {
+        return processWithDeepSeek(dialogContext);
     }
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
@@ -217,7 +255,13 @@ async function processWithAI(
         }),
     });
 
-    if (!res.ok) throw new Error(`OpenAI error ${res.status}`);
+    if (!res.ok) {
+        // Fallback to DeepSeek if OpenAI fails
+        if (DEEPSEEK_API_KEY) {
+            return processWithDeepSeek(dialogContext);
+        }
+        throw new Error(`OpenAI error ${res.status}`);
+    }
 
     const data = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;

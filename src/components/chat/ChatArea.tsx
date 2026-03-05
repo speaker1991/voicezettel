@@ -72,6 +72,8 @@ export function ChatArea() {
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-40 bg-gradient-to-b from-zinc-950 via-zinc-950/50 to-transparent" />
 
             <div ref={scrollRef} className="flex flex-1 flex-col gap-3 overflow-y-auto py-6 pr-5 chat-scrollbar">
+                {/* Spacer pushes messages to bottom when few */}
+                <div className="flex-1" />
                 {messages.map((msg) => (
                     <MessageBubble key={msg.id} message={msg} />
                 ))}

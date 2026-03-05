@@ -74,6 +74,21 @@ export type RealtimeServerEvent =
     }
     | {
         type: "response.done";
+        response?: {
+            usage?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                input_token_details?: {
+                    text_tokens?: number;
+                    audio_tokens?: number;
+                    cached_tokens?: number;
+                };
+                output_token_details?: {
+                    text_tokens?: number;
+                    audio_tokens?: number;
+                };
+            };
+        };
     }
     | {
         type: "input_audio_buffer.speech_started";

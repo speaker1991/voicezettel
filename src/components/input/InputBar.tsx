@@ -162,7 +162,7 @@ export function InputBar() {
     return (
         <form
             onSubmit={handleSubmit}
-            className="shrink-0 border-t border-white/5 py-3"
+            className="pwa-input-bar shrink-0 border-t border-white/5 py-3"
         >
             {/* Attachment previews */}
             <AnimatePresence>

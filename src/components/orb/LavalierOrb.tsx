@@ -100,7 +100,7 @@ export function LavalierOrb({ onEndMeeting }: LavalierOrbProps) {
                     </>
                 ) : (
                     <span className="text-xs tracking-wide text-zinc-500">
-                        Нажми для начала записи
+                        Режим петлички
                     </span>
                 )}
             </motion.div>

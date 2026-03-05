@@ -28,7 +28,7 @@ async function putToLocalObsidian(
     content: string,
 ): Promise<boolean> {
     const filename = `${title}.md`;
-    const path = `10_Zettels/${filename}`;
+    const path = `Zettelkasten/${filename}`;
     const url = `${apiUrl}/vault/${encodeURIComponent(path)}`;
 
     try {

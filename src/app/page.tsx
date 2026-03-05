@@ -1,8 +1,7 @@
 import { TopBar } from "@/components/layout/TopBar";
 import { TopCountersBar } from "@/components/counters/TopCountersBar";
-import { ChatArea } from "@/components/chat/ChatArea";
 import { OrbArea } from "@/components/orb/OrbArea";
-import { InputBar } from "@/components/input/InputBar";
+import { ChatSection } from "@/components/chat/ChatSection";
 import { AnimationOverlay } from "@/components/counters/FlyingIcon";
 import { UserProvider } from "@/components/providers/UserProvider";
 import { auth } from "@/lib/auth";
@@ -24,9 +23,7 @@ export default async function Home() {
 
           <OrbArea />
 
-          <ChatArea />
-
-          <InputBar />
+          <ChatSection />
         </div>
 
         <AnimationOverlay />

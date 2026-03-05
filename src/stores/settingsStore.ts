@@ -17,18 +17,18 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 `Ты — мой Экзокортекс, мой «Второй Разум» и интеллектуальный партнер. Твоя задача — в реальном времени анализировать поток моих диалогов, размышлений и разговоров, вычленять из них ценные идеи и превращать их в практические инструменты. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения.
 
 Твои принципы:
-- Радар ценности: В диалоге много «воды». Вылавливай только инсайты, неочевидные выводы, решения проблем и идеи для личного роста.
-- Если пользователь делится мыслью или идеей — запомни её через save_memory.
-- Если пользователь просит создать/записать/запомнить что-то, определи категорию и добавь тег:
-  - Задачи, заметки, напоминания → [COUNTER:tasks]
-  - Идеи, мысли, концепты → [COUNTER:ideas]
-  - Факты, знания, информация → [COUNTER:facts]
+- Радар ценности: В диалоге много «воды». Вылавливай инсайты, неочевидные выводы, решения проблем и идеи для роста.
+- Если пользователь делится мыслью или идеей — запомни её и создай заметку через create_zettel.
+- ВСЕГДА классифицируй содержание сообщения и добавляй теги:
+  - Задачи, напоминания, планы, «нужно/стоит/надо» → [COUNTER:tasks]
+  - Идеи, мысли, концепты, инсайты → [COUNTER:ideas]
+  - Факты, данные, цифры, знания → [COUNTER:facts]
   - Люди, контакты, персоны → [COUNTER:persons]
-
-Не добавляй тег если пользователь просто разговаривает или задаёт вопрос.`,
+- Одно сообщение может содержать несколько категорий — добавь ВСЕ подходящие теги.
+- Если в сообщении есть хотя бы одна идея, факт или задача — ОБЯЗАТЕЛЬНО вызови create_zettel.`,
             zettelkastenPrompt:
                 "Анализируйте входящий текст и классифицируйте информацию на: идеи, факты, персоны и задачи.",
-            aiProvider: "openai",
+            aiProvider: "deepseek",
             aiVoiceEnabled: true,
             obsidianApiKey: "",
             obsidianApiUrl: "http://127.0.0.1:27123",
@@ -75,6 +75,24 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 obsidianApiKey: state.obsidianApiKey,
                 obsidianApiUrl: state.obsidianApiUrl,
             }),
+            version: 3,
+            migrate: (persisted, version) => {
+                const state = persisted as Record<string, unknown>;
+                if (version < 2) {
+                    // Reset systemPrompt to new version with create_zettel instructions
+                    const prompt = state.systemPrompt as string | undefined;
+                    if (prompt && prompt.includes("Не добавляй тег")) {
+                        delete state.systemPrompt;
+                    }
+                }
+                if (version < 3) {
+                    // Switch from google to deepseek (Gemini free tier exhausted)
+                    if (state.aiProvider === "google" || state.aiProvider === "openai") {
+                        state.aiProvider = "deepseek";
+                    }
+                }
+                return state;
+            },
         },
     ),
 );

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useChatStore } from "@/stores/chatStore";
+import { useCountersStore } from "@/stores/countersStore";
 import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
 
@@ -17,48 +18,13 @@ export function useChatSync() {
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const loadedRef = useRef(false);
 
-    // Load chat from server on mount
+    // Start with empty chat on each page load (no history restore)
     useEffect(() => {
         if (userId === "anonymous" || loadedRef.current) return;
         loadedRef.current = true;
 
-        async function loadFromServer() {
-            try {
-                const res = await fetch("/api/chat-history?action=load", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ userId }),
-                });
-
-                if (!res.ok) return;
-
-                const data = (await res.json()) as {
-                    messages?: Array<{
-                        id: string;
-                        role: "user" | "assistant";
-                        content: string;
-                        timestamp: string;
-                        source?: "text" | "voice";
-                    }>;
-                };
-
-                if (data.messages && data.messages.length > 0) {
-                    // Replace local messages with server messages
-                    const mapped = data.messages.map((m) => ({
-                        ...m,
-                        source: m.source ?? ("text" as const),
-                    }));
-                    useChatStore.setState({ messages: mapped });
-                    logger.debug(
-                        `Chat loaded from server: ${data.messages.length} messages`,
-                    );
-                }
-            } catch {
-                logger.debug("Failed to load chat from server, using local");
-            }
-        }
-
-        void loadFromServer();
+        // Also load persisted token usage
+        void useCountersStore.getState().loadTokensFromServer(userId);
     }, [userId]);
 
     // Subscribe to message changes and save to server (debounced)

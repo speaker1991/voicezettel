@@ -7,7 +7,7 @@ export const ChatRequestSchema = z.object({
             content: z.string(),
         }),
     ),
-    provider: z.enum(["openai", "google"]).default("openai"),
+    provider: z.enum(["openai", "google", "deepseek"]).default("openai"),
     systemPrompt: z.string().optional(),
     userId: z.string().default("anonymous"),
 });

@@ -176,3 +176,15 @@ nextjs-portal,
 [data-next-error-overlay-nav] {
   display: none !important;
 }
+
+/* ── PWA standalone mode: extra bottom padding ──────────── */
+@media (display-mode: standalone) {
+  .pwa-input-bar {
+    padding-bottom: 60px !important;
+  }
+}
+
+/* ── Chat greeting: push to bottom near input ───────────── */
+.chat-greeting-anchor {
+  margin-top: auto;
+}

@@ -8,6 +8,17 @@ import { MeshSurfaceSampler } from "three/addons/math/MeshSurfaceSampler.js";
 // ── constants ────────────────────────────────────────────────
 const DEFAULT_PARTICLES = 20000;
 
+// ── Mood sequence config ─────────────────────────────────────
+const MOOD_NAMES = ["idle", "bored", "sigh", "look_left", "curious"] as const;
+const MOOD_DURATIONS: Record<string, number> = {
+    idle: 7,
+    bored: 6,
+    sigh: 5,
+    look_left: 6,
+    curious: 7,
+};
+const BLEND_DURATION = 0.8;
+
 // ── vertex shader ────────────────────────────────────────────
 const VERTEX_SHADER = /* glsl */ `
     attribute float aPhase;
@@ -15,6 +26,10 @@ const VERTEX_SHADER = /* glsl */ `
 
     uniform float uTime;
     uniform float uScaledTime;
+    uniform float uMood;
+    uniform float uMoodPrev;
+    uniform float uMoodBlend;
+    uniform float uMoodTime;
 
     varying float vAlpha;
     varying float vFacing;
@@ -65,24 +80,149 @@ const VERTEX_SHADER = /* glsl */ `
         return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
     }
 
+    // ── Y-axis rotation ──
+    vec3 rotateY(vec3 p, float angle) {
+        float cs = cos(angle);
+        float sn = sin(angle);
+        return vec3(cs * p.x + sn * p.z, p.y, -sn * p.x + cs * p.z);
+    }
+
+    // ── Mood pose function ──
+    // Returns displaced position for a given mood index and moodTime
+    vec3 applyMood(vec3 pos, vec3 nDir, float mood, float mt, float st) {
+        vec3 p = pos;
+
+        // ─── 0: idle ─────────────────────────────────
+        if (mood < 0.5) {
+            float n = snoise(p * 0.4 + st * 0.35) * 0.02;
+            p += nDir * n;
+            p += nDir * sin(uTime * 0.55) * 0.01;               // breathe
+            p.x += sin(uTime * 0.22) * 0.05;                     // sway X
+            p.y += sin(uTime * 0.17 + 0.8) * 0.025;             // sway Y
+            p.y += sin(uTime * 0.13) * 0.008 * p.z * 0.2;       // nod
+        }
+
+        // ─── 1: bored ────────────────────────────────
+        else if (mood < 1.5) {
+            float slowSt = st * 0.33;   // shimmer 3x slower
+            float n = snoise(p * 0.4 + slowSt * 0.35) * 0.015;
+            p += nDir * n;
+            p += nDir * sin(uTime * 0.35) * 0.006;               // sluggish breathe
+
+            // Head tilts down 15deg and right 5deg
+            float tiltDown = radians(-15.0);
+            float tiltRight = radians(5.0);
+            p.y += sin(tiltDown) * p.z * 0.15;
+            p.z += cos(tiltDown) * 0.0;
+            p.x += sin(tiltRight) * p.z * 0.05;
+
+            // Shoulders droop (lower parts sink)
+            float shoulderMask = smoothstep(0.0, -0.5, p.y);
+            p.y -= shoulderMask * 0.06;
+
+            // Minimal sway
+            p.x += sin(uTime * 0.12) * 0.02;
+        }
+
+        // ─── 2: sigh ─────────────────────────────────
+        else if (mood < 2.5) {
+            float dur = 5.0;
+            float phase = mt / dur;
+            float n = snoise(p * 0.4 + st * 0.35) * 0.02;
+            p += nDir * n;
+
+            float shoulderMask = smoothstep(0.0, -0.5, p.y);
+            float chestMask = smoothstep(-0.2, 0.3, p.y) * smoothstep(-0.5, 0.3, p.z);
+
+            if (phase < 0.4) {
+                // Phase 1: inhale (0-2s)
+                float t = phase / 0.4;
+                float ease = t * t * (3.0 - 2.0 * t); // smoothstep
+                p.y += shoulderMask * 0.08 * ease;
+                p.z += chestMask * 0.04 * ease;
+                p.y += 0.01 * ease * p.z; // head forward
+            } else if (phase < 0.6) {
+                // Phase 2: hold (2-3s)
+                p.y += shoulderMask * 0.08;
+                p.z += chestMask * 0.04;
+                p.y += 0.01 * p.z;
+            } else {
+                // Phase 3: exhale (3-5s)
+                float t = (phase - 0.6) / 0.4;
+                float ease = 1.0 - t * t * (3.0 - 2.0 * t);
+                p.y += shoulderMask * 0.08 * ease;
+                p.z += chestMask * 0.04 * ease;
+                p.y += 0.01 * ease * p.z;
+            }
+
+            p += nDir * sin(uTime * 0.55) * 0.008;
+        }
+
+        // ─── 3: look_left ────────────────────────────
+        else if (mood < 3.5) {
+            float dur = 6.0;
+            float phase = mt / dur;
+            float n = snoise(p * 0.4 + st * 0.35) * 0.02;
+            p += nDir * n;
+            p += nDir * sin(uTime * 0.55) * 0.01;
+
+            float angle = 0.0;
+            float maxAngle = radians(35.0);
+
+            if (phase < 0.333) {
+                // Phase 1: turn left (0-2s)
+                float t = phase / 0.333;
+                angle = maxAngle * t * t * (3.0 - 2.0 * t);
+            } else if (phase < 0.5) {
+                // Phase 2: hold (2-3s)
+                angle = maxAngle;
+            } else {
+                // Phase 3: return (3-6s)
+                float t = (phase - 0.5) / 0.5;
+                angle = maxAngle * (1.0 - t * t * (3.0 - 2.0 * t));
+            }
+
+            p = rotateY(p, angle);
+
+            // Eye zone shimmer during turn
+            float eyeMask = step(0.5, p.y) * step(0.0, p.z);
+            p.x += eyeMask * sin(uTime * 3.0 + aPhase) * 0.008 * sin(angle);
+
+            p.x += sin(uTime * 0.18) * 0.03;
+        }
+
+        // ─── 4: curious ──────────────────────────────
+        else {
+            float fastSt = st * 1.5;   // shimmer 1.5x faster
+            float n = snoise(p * 0.4 + fastSt * 0.35) * 0.025;
+            p += nDir * n;
+            p += nDir * sin(uTime * 0.65) * 0.012;
+
+            // Head sways ±12deg on Y
+            float headSwing = sin(uTime * 0.7) * radians(12.0);
+            p = rotateY(p, headSwing);
+
+            // Energetic X sway
+            p.x += sin(uTime * 0.35) * 0.08;
+            p.y += sin(uTime * 0.28 + 1.0) * 0.03;
+
+            // Micro shoulder movements
+            float shoulderMask = smoothstep(0.0, -0.5, p.y);
+            p.y += shoulderMask * sin(uTime * 1.2) * 0.015;
+        }
+
+        return p;
+    }
+
     void main() {
-        vec3 pos = position;
         vec3 nDir = length(aNormal) > 0.01 ? aNormal : vec3(0.0, 0.0, 1.0);
 
-        // Subtle particle drift
-        float n = snoise(pos * 0.4 + uScaledTime * 0.35) * 0.02;
-        pos += nDir * n;
+        // Compute pose for current and previous mood
+        vec3 posCurr = applyMood(position, nDir, uMood, uMoodTime, uScaledTime);
+        vec3 posPrev = applyMood(position, nDir, uMoodPrev, uMoodTime, uScaledTime);
 
-        // Breathing
-        float breathe = sin(uTime * 0.55) * 0.01;
-        pos += nDir * breathe;
-
-        // Gentle idle sway
-        pos.x += sin(uTime * 0.22) * 0.05;
-        pos.y += sin(uTime * 0.17 + 0.8) * 0.025;
-
-        // Subtle nod
-        pos.y += sin(uTime * 0.13) * 0.008 * pos.z * 0.2;
+        // Blend between moods during transition
+        vec3 pos = mix(posPrev, posCurr, uMoodBlend);
 
         // Facing ratio for depth shading
         vec3 viewDir = normalize(cameraPosition - (modelMatrix * vec4(pos, 1.0)).xyz);
@@ -160,6 +300,10 @@ export function ParticleHead({
                 uniforms: {
                     uTime: { value: 0 },
                     uScaledTime: { value: 0 },
+                    uMood: { value: 0 },
+                    uMoodPrev: { value: 0 },
+                    uMoodBlend: { value: 1.0 },
+                    uMoodTime: { value: 0 },
                     uColorA: { value: new THREE.Color(0xBA38BE) },
                     uColorB: { value: new THREE.Color(0x06B6D4) },
                 },
@@ -209,6 +353,13 @@ export function ParticleHead({
                 let scaledTime = 0;
                 let lastTime = 0;
 
+                // ── Mood sequencer state ──
+                let currentMoodIdx = 0;
+                let prevMoodIdx = 0;
+                let moodStartTime = 0;
+                let blendStartTime = 0;
+                let blendDone = true;
+
                 const animate = () => {
                     const animId = requestAnimationFrame(animate);
                     if (sceneRef.current) {
@@ -220,8 +371,36 @@ export function ParticleHead({
                     lastTime = elapsed;
                     scaledTime += dt * 0.08;
 
-                    material.uniforms.uTime.value = elapsed;
-                    material.uniforms.uScaledTime.value = scaledTime;
+                    // ── Mood transition logic ──
+                    const moodName = MOOD_NAMES[currentMoodIdx];
+                    const moodDuration = MOOD_DURATIONS[moodName];
+                    const moodElapsed = elapsed - moodStartTime;
+
+                    if (moodElapsed >= moodDuration) {
+                        prevMoodIdx = currentMoodIdx;
+                        currentMoodIdx = (currentMoodIdx + 1) % MOOD_NAMES.length;
+                        moodStartTime = elapsed;
+                        blendStartTime = elapsed;
+                        blendDone = false;
+                    }
+
+                    // Compute blend factor (0→1 over BLEND_DURATION)
+                    let blend = 1.0;
+                    if (!blendDone) {
+                        const blendElapsed = elapsed - blendStartTime;
+                        blend = Math.min(blendElapsed / BLEND_DURATION, 1.0);
+                        // Smooth ease in-out
+                        blend = blend * blend * (3 - 2 * blend);
+                        if (blend >= 1.0) blendDone = true;
+                    }
+
+                    const u = material.uniforms;
+                    u.uTime.value = elapsed;
+                    u.uScaledTime.value = scaledTime;
+                    u.uMood.value = currentMoodIdx;
+                    u.uMoodPrev.value = prevMoodIdx;
+                    u.uMoodBlend.value = blend;
+                    u.uMoodTime.value = elapsed - moodStartTime;
 
                     renderer.render(scene, camera);
                 };

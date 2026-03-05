@@ -44,6 +44,23 @@ if (-not $cfExe) {
 
 Write-Host "[OK] cloudflared: $cfExe" -ForegroundColor Green
 
+# -- Free port if occupied --
+$existing = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+if ($existing) {
+    foreach ($procId in $existing) {
+        Write-Host "[!] Killing process $procId on port $Port..." -ForegroundColor Yellow
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+}
+
+# Remove stale lock file
+$lockFile = Join-Path (Get-Location) ".next\dev\lock"
+if (Test-Path $lockFile) {
+    Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+    Write-Host "[!] Removed stale .next/dev/lock" -ForegroundColor Yellow
+}
+
 # -- Start Next.js --
 Write-Host ""
 Write-Host "[1/2] Starting Next.js on port $Port..." -ForegroundColor Cyan

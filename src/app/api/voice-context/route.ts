@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     const parts: string[] = [];
 
     // 1. Recent memories
-    const recent = await getRecentMemories(userId, 15);
+    const recent = await getRecentMemories(userId, 30);
     if (recent.length > 0) {
         parts.push("--- MEMORY (what you remember about this user) ---");
         for (const mem of recent) {

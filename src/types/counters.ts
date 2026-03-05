@@ -18,10 +18,14 @@ export interface CountersActions {
     setTokensRub: (value: number) => void;
     setTokensBalance: (value: number) => void;
     addTokensUsed: (count: number) => void;
+    /** Load persisted token totals from server */
+    loadTokensFromServer: (userId: string) => Promise<void>;
+    /** Report usage to server and update local state */
+    reportTokenUsage: (userId: string, model: string, textIn: number, textOut: number, audioIn?: number, audioOut?: number) => Promise<void>;
 }
 
 // ── Settings store types ────────────────────────────────────
-export type AiProvider = "openai" | "google";
+export type AiProvider = "openai" | "google" | "deepseek";
 
 export interface SettingsState {
     showUsdTokens: boolean;

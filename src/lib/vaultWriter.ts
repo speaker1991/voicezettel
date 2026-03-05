@@ -19,7 +19,7 @@ interface WriteResult {
 export async function writeNoteToVault(
     title: string,
     content: string,
-    folder: string = "10_Zettels",
+    folder: string = "Zettelkasten",
 ): Promise<WriteResult> {
     const filename = `${title}.md`;
 

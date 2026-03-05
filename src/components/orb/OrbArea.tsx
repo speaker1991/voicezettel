@@ -28,6 +28,7 @@ const SWIPE_THRESHOLD = 80;
 export function OrbArea() {
     const orbState = useChatStore((s) => s.orbState);
     const audioLevel = useChatStore((s) => s.audioLevel);
+    const setOrbMode = useChatStore((s) => s.setOrbMode);
     const orbParticles = useSettingsStore((s) => s.orbParticles);
     const { isVoiceActive, startVoice, stopVoice } = useVoiceSession();
 
@@ -60,8 +61,9 @@ export function OrbArea() {
             const currentIdx = MODES.indexOf(mode);
             setSlideDir(targetIdx > currentIdx ? 1 : -1);
             setMode(target);
+            setOrbMode(target);
         },
-        [mode],
+        [mode, setOrbMode],
     );
 
     const handleDragEnd = useCallback(

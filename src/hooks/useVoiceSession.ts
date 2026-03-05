@@ -7,6 +7,7 @@ import {
 } from "@/lib/realtimeVoiceClient";
 import { useChatStore } from "@/stores/chatStore";
 import { useAnimationStore } from "@/stores/animationStore";
+import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
@@ -95,7 +96,7 @@ export function useVoiceSession() {
             },
 
             onAudioStart: () => {
-                // Mute mic while AI speaks to prevent echo
+                // Double-mute in case speech_stopped didn't fire
                 clientRef.current?.muteMic();
                 setOrbState("speaking");
             },
@@ -105,6 +106,8 @@ export function useVoiceSession() {
             },
 
             onUserSpeechStopped: () => {
+                // Mute mic immediately — AI will respond soon
+                clientRef.current?.muteMic();
                 setOrbState("thinking");
             },
 
@@ -145,6 +148,34 @@ export function useVoiceSession() {
                     }
                 }
 
+                // ── Save to memory store + classify ──
+                const userMsgForMem = [...useChatStore.getState().messages]
+                    .reverse()
+                    .find((m) => m.role === "user");
+                fetch("/api/voice-memory", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userId,
+                        userText: userMsgForMem?.content,
+                        assistantText: aiText || lastAssistantText.current,
+                    }),
+                })
+                    .then((res) => res.json())
+                    .then((data: { counterTags?: string[] }) => {
+                        if (data.counterTags && data.counterTags.length > 0) {
+                            for (const tag of data.counterTags) {
+                                const match = /\[COUNTER:(ideas|facts|persons|tasks)\]/i.exec(tag);
+                                if (match) {
+                                    useAnimationStore
+                                        .getState()
+                                        .triggerAnimation(match[1].toLowerCase() as "ideas" | "facts" | "persons" | "tasks");
+                                }
+                            }
+                        }
+                    })
+                    .catch(() => { /* silent */ });
+
                 isAssistantResponding.current = false;
                 userTranscriptReceived.current = false;
                 lastAssistantText.current = "";
@@ -157,6 +188,17 @@ export function useVoiceSession() {
                     .getState()
                     .addNotification(err.message, "error");
                 stopVoiceInternal();
+            },
+
+            onTokenUsage: (usage) => {
+                useCountersStore.getState().reportTokenUsage(
+                    userId ?? "",
+                    "gpt-4o-mini-realtime-preview",
+                    usage.textIn,
+                    usage.textOut,
+                    usage.audioIn,
+                    usage.audioOut,
+                ).catch(() => { /* silent */ });
             },
         };
 
