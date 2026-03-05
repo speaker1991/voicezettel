@@ -63,16 +63,21 @@ export class RealtimeVoiceClient {
         this.audioEl = document.createElement("audio");
         this.audioEl.autoplay = true;
         this.audioEl.setAttribute("playsinline", "true");
-        // Mute OpenAI audio BEFORE track arrives (for ElevenLabs mode)
-        if (muteOnStart) {
-            this.audioEl.volume = 0;
-        }
         // Attach to DOM for better mobile audio handling
         this.audioEl.style.display = "none";
         document.body.appendChild(this.audioEl);
 
+        // Save mute flag for ontrack
+        const skipAudioPlayback = muteOnStart;
+
         this.pc.ontrack = (event) => {
             logger.warn("Remote track received:", event.track.kind);
+            // In Edge TTS mode: skip attaching OpenAI audio stream
+            // (iOS ignores audio.volume=0, so we must not play it at all)
+            if (skipAudioPlayback) {
+                logger.warn("Skipping OpenAI audio playback (Edge TTS mode)");
+                return;
+            }
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
                 // Ensure playback starts (needed on mobile)
