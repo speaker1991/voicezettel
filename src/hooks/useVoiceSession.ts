@@ -125,9 +125,6 @@ export function useVoiceSession() {
             },
 
             onAudioEnd: () => {
-                // Unmute mic for next user turn
-                clientRef.current?.unmuteMic();
-
                 // Detect counter type from AI response
                 const counterType = detectCounterType(
                     lastAssistantText.current,
@@ -136,25 +133,39 @@ export function useVoiceSession() {
                     useAnimationStore
                         .getState()
                         .triggerAnimation(counterType);
-                    // Strip tag from displayed message
                     const cleaned = stripCounterTag(
                         lastAssistantText.current,
                     );
                     updateLastAssistantMessage({ content: cleaned });
                 }
 
+                // Save text before clearing (Edge TTS callback needs it)
+                const savedText = lastAssistantText.current;
+                const aiText = counterType
+                    ? stripCounterTag(savedText)
+                    : savedText;
+
                 // ── Edge TTS: speak the response ──
-                if (lastAssistantText.current) {
+                // Mic stays MUTED during playback → unmute in onEnded
+                if (savedText) {
                     const textToSpeak = counterType
-                        ? stripCounterTag(lastAssistantText.current)
-                        : lastAssistantText.current;
-                    void speakEdgeTTS(textToSpeak, undefined, edgeTtsAudioEl);
+                        ? stripCounterTag(savedText)
+                        : savedText;
+
+                    setOrbState("speaking");
+
+                    void speakEdgeTTS(textToSpeak, () => {
+                        // Edge TTS finished → unmute mic, ready for next turn
+                        clientRef.current?.unmuteMic();
+                        setOrbState("listening");
+                    }, edgeTtsAudioEl);
+                } else {
+                    // No text to speak — unmute immediately
+                    clientRef.current?.unmuteMic();
+                    setOrbState("listening");
                 }
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──
-                const aiText = counterType
-                    ? stripCounterTag(lastAssistantText.current)
-                    : lastAssistantText.current;
                 if (aiText) {
                     const msgs = useChatStore.getState().messages;
                     const lastUser = [...msgs]
@@ -162,9 +173,7 @@ export function useVoiceSession() {
                         .find((m) => m.role === "user");
                     if (lastUser) {
                         sendToObsidian(lastUser.content, aiText).catch(
-                            () => {
-                                /* handled inside sendToObsidian */
-                            },
+                            () => { /* handled inside */ },
                         );
                     }
                 }
@@ -179,7 +188,7 @@ export function useVoiceSession() {
                     body: JSON.stringify({
                         userId,
                         userText: userMsgForMem?.content,
-                        assistantText: aiText || lastAssistantText.current,
+                        assistantText: aiText || savedText,
                     }),
                 })
                     .then((res) => res.json())
@@ -200,7 +209,6 @@ export function useVoiceSession() {
                 isAssistantResponding.current = false;
                 userTranscriptReceived.current = false;
                 lastAssistantText.current = "";
-                setOrbState("listening");
             },
 
             onSessionError: (err: Error) => {
