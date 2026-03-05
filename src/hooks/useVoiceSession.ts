@@ -66,10 +66,6 @@ export function useVoiceSession() {
         const callbacks: VoiceClientCallbacks = {
             onConnected: () => {
                 setOrbState("listening");
-                // In ElevenLabs mode: mute OpenAI audio, use ElevenLabs instead
-                if (useElevenLabs) {
-                    clientRef.current?.muteOutput();
-                }
             },
 
             onTranscriptUser: (text: string) => {
@@ -250,7 +246,7 @@ export function useVoiceSession() {
                 // Context fetch failed silently — voice still works
             }
 
-            await client.start(voiceContext);
+            await client.start(voiceContext, useElevenLabs);
             setIsVoiceActive(true);
         } catch (err) {
             logger.error(

@@ -37,7 +37,7 @@ export class RealtimeVoiceClient {
 
     // ── Public API ───────────────────────────────────────────
 
-    async start(context?: string): Promise<void> {
+    async start(context?: string, muteOnStart = false): Promise<void> {
         // Save context for session config
         this.contextStr = context ?? "";
 
@@ -63,6 +63,10 @@ export class RealtimeVoiceClient {
         this.audioEl = document.createElement("audio");
         this.audioEl.autoplay = true;
         this.audioEl.setAttribute("playsinline", "true");
+        // Mute OpenAI audio BEFORE track arrives (for ElevenLabs mode)
+        if (muteOnStart) {
+            this.audioEl.volume = 0;
+        }
         // Attach to DOM for better mobile audio handling
         this.audioEl.style.display = "none";
         document.body.appendChild(this.audioEl);
