@@ -159,6 +159,9 @@ export function useVoiceSession() {
                     edgeTtsSpeaking.current = true;
                     setOrbState("speaking");
 
+                    // Disable mic to prevent echo pickup
+                    clientRef.current?.disableMic();
+
                     // Save text before clearing refs
                     const savedText = lastAssistantText.current;
                     isAssistantResponding.current = false;
@@ -166,7 +169,12 @@ export function useVoiceSession() {
                     lastAssistantText.current = "";
 
                     void speakEdgeTTS(textToSpeak, () => {
-                        // Edge TTS finished — ready for next turn
+                        // Edge TTS finished:
+                        // 1. Clear any echo audio from OpenAI's buffer
+                        clientRef.current?.clearAudioBuffer();
+                        // 2. Re-enable mic
+                        clientRef.current?.enableMic();
+                        // 3. Clear the flag
                         edgeTtsSpeaking.current = false;
                         setOrbState("listening");
 

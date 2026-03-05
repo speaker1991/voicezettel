@@ -38,6 +38,9 @@ export type RealtimeClientEvent =
         type: "input_audio_buffer.commit";
     }
     | {
+        type: "input_audio_buffer.clear";
+    }
+    | {
         type: "session.update";
         session: {
             modalities?: string[];

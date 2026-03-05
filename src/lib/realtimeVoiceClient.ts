@@ -161,9 +161,30 @@ export class RealtimeVoiceClient {
         this.assistantTranscript = "";
     }
 
-    /** Get the audio element (created during user gesture, safe for mobile autoplay) */
-    getAudioElement(): HTMLAudioElement | null {
-        return this.audioEl;
+    /** Disable mic track (simple — no replaceTrack, just track.enabled) */
+    disableMic(): void {
+        if (!this.localStream) return;
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = false;
+        }
+    }
+
+    /** Re-enable mic track */
+    enableMic(): void {
+        if (!this.localStream) return;
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = true;
+        }
+    }
+
+    /** Clear OpenAI's audio input buffer (discard echo audio from Edge TTS) */
+    clearAudioBuffer(): void {
+        if (!this.dc || this.dc.readyState !== "open") return;
+        const clearEvent: RealtimeClientEvent = {
+            type: "input_audio_buffer.clear",
+        };
+        this.dc.send(JSON.stringify(clearEvent));
+        logger.warn("Audio buffer cleared (discarding echo)");
     }
 
     /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */
