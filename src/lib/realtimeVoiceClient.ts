@@ -267,7 +267,7 @@ export class RealtimeVoiceClient {
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
-                modalities: this.disableAudioOutput ? ["text"] : ["text", "audio"],
+                modalities: ["text", "audio"],
                 instructions: `Ты — Экзокортекс, голосовой ИИ-помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
 
 Твои принципы:
@@ -338,11 +338,17 @@ ${this.contextStr}`,
                 break;
 
             case "response.audio_transcript.done":
+                // Signal that full transcript is ready (for ElevenLabs)
+                if (this.callbacks.onTextResponseDone && this.disableAudioOutput) {
+                    this.callbacks.onTextResponseDone(this.assistantTranscript);
+                }
                 this.assistantTranscript = "";
                 break;
 
             case "response.audio.done":
-                this.callbacks.onAudioEnd();
+                if (!this.disableAudioOutput) {
+                    this.callbacks.onAudioEnd();
+                }
                 break;
 
             // ── Text-only mode events (ElevenLabs) ──
@@ -365,7 +371,8 @@ ${this.contextStr}`,
 
             case "response.output_item.done":
                 if (this.disableAudioOutput) {
-                    this.callbacks.onAudioEnd();
+                    // In ElevenLabs mode, this signals end of AI response item
+                    // onAudioEnd is handled by ElevenLabs onEnded callback
                 }
                 break;
 
