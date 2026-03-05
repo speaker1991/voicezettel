@@ -3,7 +3,7 @@
 import { useRef, useEffect } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useElevenLabsTTS } from "@/hooks/useElevenLabsTTS";
+import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import type { Message } from "@/types/chat";
 
 function bubbleClasses(role: Message["role"]): string {
@@ -38,7 +38,7 @@ export function ChatArea() {
     const spokenIdRef = useRef<string | null>(null);
 
     // TTS
-    const { speak } = useElevenLabsTTS();
+    const { speak } = useEdgeTTS();
     const aiVoiceEnabled = useSettingsStore((s) => s.aiVoiceEnabled);
     const ttsProvider = useSettingsStore((s) => s.ttsProvider);
 
@@ -49,7 +49,7 @@ export function ChatArea() {
     // Auto-speak completed assistant messages via ElevenLabs
     useEffect(() => {
         if (orbState !== "idle") return;
-        if (!aiVoiceEnabled || ttsProvider !== "elevenlabs") return;
+        if (!aiVoiceEnabled || ttsProvider !== "edge") return;
 
         const lastMsg = messages[messages.length - 1];
         if (

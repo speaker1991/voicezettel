@@ -30,8 +30,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 "Анализируйте входящий текст и классифицируйте информацию на: идеи, факты, персоны и задачи.",
             aiProvider: "deepseek",
             aiVoiceEnabled: true,
-            ttsProvider: "elevenlabs",
-            elevenLabsVoiceId: "EXAVITQu4vr4xnSDxMaL",
+            ttsProvider: "edge",
+            edgeTtsVoice: "ru-RU-SvetlanaNeural",
             obsidianApiKey: "",
             obsidianApiUrl: "http://127.0.0.1:27123",
 
@@ -56,7 +56,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
             toggleAiVoiceEnabled: () =>
                 set((s) => ({ aiVoiceEnabled: !s.aiVoiceEnabled })),
             setTtsProvider: (provider) => set({ ttsProvider: provider }),
-            setElevenLabsVoiceId: (id) => set({ elevenLabsVoiceId: id }),
+            setEdgeTtsVoice: (voice) => set({ edgeTtsVoice: voice }),
             setObsidianApiKey: (key) => set({ obsidianApiKey: key }),
             setObsidianApiUrl: (url) => set({ obsidianApiUrl: url }),
         }),
@@ -77,11 +77,11 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 aiProvider: state.aiProvider,
                 aiVoiceEnabled: state.aiVoiceEnabled,
                 ttsProvider: state.ttsProvider,
-                elevenLabsVoiceId: state.elevenLabsVoiceId,
+                edgeTtsVoice: state.edgeTtsVoice,
                 obsidianApiKey: state.obsidianApiKey,
                 obsidianApiUrl: state.obsidianApiUrl,
             }),
-            version: 4,
+            version: 5,
             migrate: (persisted, version) => {
                 const state = persisted as Record<string, unknown>;
                 if (version < 2) {
@@ -98,12 +98,18 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                     }
                 }
                 if (version < 4) {
-                    // Add TTS provider defaults
-                    if (!state.ttsProvider) {
-                        state.ttsProvider = "elevenlabs";
+                    // Migrate from elevenlabs to edge TTS
+                    state.ttsProvider = "edge";
+                    state.edgeTtsVoice = "ru-RU-SvetlanaNeural";
+                    delete state.elevenLabsVoiceId;
+                }
+                if (version < 5) {
+                    // Force edge TTS for all users
+                    if (state.ttsProvider === "elevenlabs") {
+                        state.ttsProvider = "edge";
                     }
-                    if (!state.elevenLabsVoiceId) {
-                        state.elevenLabsVoiceId = "EXAVITQu4vr4xnSDxMaL";
+                    if (!state.edgeTtsVoice) {
+                        state.edgeTtsVoice = "ru-RU-SvetlanaNeural";
                     }
                 }
                 return state;

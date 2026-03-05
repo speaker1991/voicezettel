@@ -1,17 +1,19 @@
 import { NextRequest } from "next/server";
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { logger } from "@/lib/logger";
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? "EXAVITQu4vr4xnSDxMaL";
+/**
+ * Available Russian voices:
+ * - ru-RU-SvetlanaNeural (female, default)
+ * - ru-RU-DmitryNeural (male)
+ * - ru-RU-DariyaNeural (female)
+ */
+const DEFAULT_VOICE = "ru-RU-SvetlanaNeural";
 
 export async function POST(req: NextRequest) {
-    if (!ELEVENLABS_API_KEY) {
-        return new Response("ELEVENLABS_API_KEY not configured", { status: 500 });
-    }
-
-    const { text, voiceId } = (await req.json()) as {
+    const { text, voice } = (await req.json()) as {
         text: string;
-        voiceId?: string;
+        voice?: string;
     };
 
     if (!text || text.trim().length === 0) {
@@ -19,38 +21,39 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        const res = await fetch(
-            `https://api.elevenlabs.io/v1/text-to-speech/${voiceId ?? DEFAULT_VOICE_ID}/stream`,
-            {
-                method: "POST",
-                headers: {
-                    "xi-api-key": ELEVENLABS_API_KEY,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    text: text.slice(0, 5000), // Limit to 5k chars
-                    model_id: "eleven_multilingual_v2",
-                    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                }),
-            },
+        const tts = new MsEdgeTTS();
+        await tts.setMetadata(
+            voice ?? DEFAULT_VOICE,
+            OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
         );
 
-        if (!res.ok || !res.body) {
-            const errText = await res.text();
-            logger.error(`ElevenLabs error ${res.status}: ${errText.slice(0, 200)}`);
-            return new Response(`ElevenLabs error ${res.status}`, {
-                status: res.status,
-            });
+        const { audioStream } = tts.toStream(text.slice(0, 5000));
+
+        // Collect stream into buffer
+        const chunks: Buffer[] = [];
+        await new Promise<void>((resolve, reject) => {
+            audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+            audioStream.on("end", resolve);
+            audioStream.on("error", reject);
+        });
+
+        tts.close();
+
+        const audioBuffer = Buffer.concat(chunks);
+
+        if (audioBuffer.length === 0) {
+            return new Response("Empty audio", { status: 500 });
         }
 
-        return new Response(res.body, {
+        return new Response(audioBuffer, {
             headers: {
                 "Content-Type": "audio/mpeg",
+                "Content-Length": String(audioBuffer.length),
                 "Cache-Control": "no-cache",
             },
         });
     } catch (err) {
-        logger.error("TTS error:", (err as Error).message);
+        logger.error("Edge TTS error:", (err as Error).message);
         return new Response("TTS error", { status: 500 });
     }
 }

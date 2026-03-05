@@ -4,11 +4,11 @@ import { useRef, useCallback } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 /**
- * Hook for ElevenLabs text-to-speech.
- * Sends text to /api/tts proxy, plays the returned audio stream.
+ * Hook for Edge TTS (Microsoft neural voices).
+ * Sends text to /api/tts proxy, plays the returned audio.
  * Supports optional onEnded callback for orb state synchronization.
  */
-export function useElevenLabsTTS() {
+export function useEdgeTTS() {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const urlRef = useRef<string | null>(null);
 
@@ -34,12 +34,12 @@ export function useElevenLabsTTS() {
                 urlRef.current = null;
             }
 
-            const voiceId = useSettingsStore.getState().elevenLabsVoiceId;
+            const voice = useSettingsStore.getState().edgeTtsVoice;
 
             const res = await fetch("/api/tts", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: clean, voiceId }),
+                body: JSON.stringify({ text: clean, voice }),
             });
 
             if (!res.ok) {

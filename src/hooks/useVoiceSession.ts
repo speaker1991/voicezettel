@@ -13,7 +13,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
-import { useElevenLabsTTS } from "@/hooks/useElevenLabsTTS";
+import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
 
 export function useVoiceSession() {
@@ -32,7 +32,7 @@ export function useVoiceSession() {
     const setModality = useChatStore((s) => s.setModality);
 
     // ElevenLabs TTS
-    const { speak: speakElevenLabs, stop: stopElevenLabs } = useElevenLabsTTS();
+    const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
 
     // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
@@ -46,19 +46,19 @@ export function useVoiceSession() {
             clientRef.current.stop();
             clientRef.current = null;
         }
-        stopElevenLabs();
+        stopEdgeTTS();
         isAssistantResponding.current = false;
         userTranscriptReceived.current = false;
         setIsVoiceActive(false);
         setOrbState("idle");
         setModality("text");
-    }, [setOrbState, setModality, stopElevenLabs]);
+    }, [setOrbState, setModality, stopEdgeTTS]);
 
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
 
         const ttsProvider = useSettingsStore.getState().ttsProvider;
-        const useElevenLabs = ttsProvider === "elevenlabs";
+        const useElevenLabs = ttsProvider === "edge";
 
         setModality("voice");
         setOrbState("listening"); // Show listening while connecting
@@ -144,7 +144,7 @@ export function useVoiceSession() {
                     const textToSpeak = counterType
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
-                    void speakElevenLabs(textToSpeak);
+                    void speakEdgeTTS(textToSpeak);
                 }
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──
@@ -271,7 +271,7 @@ export function useVoiceSession() {
         setOrbState,
         setModality,
         stopVoiceInternal,
-        speakElevenLabs,
+        speakEdgeTTS,
     ]);
 
     const stopVoice = useCallback(() => {

@@ -26,7 +26,7 @@ export interface CountersActions {
 
 // ── Settings store types ────────────────────────────────────
 export type AiProvider = "openai" | "google" | "deepseek";
-export type TtsProvider = "browser" | "elevenlabs";
+export type TtsProvider = "browser" | "edge";
 
 export interface SettingsState {
     showUsdTokens: boolean;
@@ -42,7 +42,7 @@ export interface SettingsState {
     aiProvider: AiProvider;
     aiVoiceEnabled: boolean;
     ttsProvider: TtsProvider;
-    elevenLabsVoiceId: string;
+    edgeTtsVoice: string;
     obsidianApiKey: string;
     obsidianApiUrl: string;
 }
@@ -61,7 +61,7 @@ export interface SettingsActions {
     setAiProvider: (provider: AiProvider) => void;
     toggleAiVoiceEnabled: () => void;
     setTtsProvider: (provider: TtsProvider) => void;
-    setElevenLabsVoiceId: (id: string) => void;
+    setEdgeTtsVoice: (voice: string) => void;
     setObsidianApiKey: (key: string) => void;
     setObsidianApiUrl: (url: string) => void;
 }
