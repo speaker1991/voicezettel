@@ -133,9 +133,6 @@ export function useVoiceSession() {
             },
 
             onAudioEnd: () => {
-                // Unmute mic for next user turn
-                clientRef.current?.unmuteMic();
-
                 // Detect counter type from AI response
                 const counterType = detectCounterType(
                     lastAssistantText.current,
@@ -156,8 +153,70 @@ export function useVoiceSession() {
                     const textToSpeak = counterType
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
-                    void speakEdgeTTS(textToSpeak, undefined, edgeTtsAudioEl);
+
+                    // Keep mic MUTED during Edge TTS playback
+                    // (prevents echo → VAD → re-mute cycle)
+                    setOrbState("speaking");
+
+                    // Save refs before clearing
+                    const savedText = lastAssistantText.current;
+                    isAssistantResponding.current = false;
+                    userTranscriptReceived.current = false;
+                    lastAssistantText.current = "";
+
+                    void speakEdgeTTS(textToSpeak, () => {
+                        // Edge TTS finished — NOW unmute mic
+                        clientRef.current?.unmuteMic();
+                        setOrbState("listening");
+
+                        // Post-response processing (obsidian, memory)
+                        const aiText = counterType
+                            ? stripCounterTag(savedText)
+                            : savedText;
+                        if (aiText) {
+                            const msgs = useChatStore.getState().messages;
+                            const lastUser = [...msgs]
+                                .reverse()
+                                .find((m) => m.role === "user");
+                            if (lastUser) {
+                                sendToObsidian(lastUser.content, aiText).catch(
+                                    () => { /* handled inside */ },
+                                );
+                            }
+                        }
+                        const userMsgForMem = [...useChatStore.getState().messages]
+                            .reverse()
+                            .find((m) => m.role === "user");
+                        fetch("/api/voice-memory", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                userId,
+                                userText: userMsgForMem?.content,
+                                assistantText: aiText || savedText,
+                            }),
+                        })
+                            .then((res) => res.json())
+                            .then((data: { counterTags?: string[] }) => {
+                                if (data.counterTags && data.counterTags.length > 0) {
+                                    for (const tag of data.counterTags) {
+                                        const match = /\[COUNTER:(ideas|facts|persons|tasks)\]/i.exec(tag);
+                                        if (match) {
+                                            useAnimationStore
+                                                .getState()
+                                                .triggerAnimation(match[1].toLowerCase() as "ideas" | "facts" | "persons" | "tasks");
+                                        }
+                                    }
+                                }
+                            })
+                            .catch(() => { /* silent */ });
+                    }, edgeTtsAudioEl);
+
+                    return; // Skip normal post-response flow
                 }
+
+                // ── Standard mode: unmute and process ──
+                clientRef.current?.unmuteMic();
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──
                 const aiText = counterType

@@ -62,14 +62,16 @@ export class RealtimeVoiceClient {
         // 3. Set up remote audio playback
         this.audioEl = document.createElement("audio");
         this.audioEl.setAttribute("playsinline", "true");
-        // In Edge TTS mode: no autoplay, no play() — audio element exists
-        // for WebRTC stream attachment only (keeps connection healthy)
-        if (!muteOnStart) {
-            this.audioEl.autoplay = true;
-        }
-        // Attach to DOM for mobile compatibility
         this.audioEl.style.display = "none";
-        document.body.appendChild(this.audioEl);
+
+        if (muteOnStart) {
+            // Edge TTS mode: element NOT in DOM → no audio plays
+            // But srcObject is still set → WebRTC stream consumed → connection healthy
+        } else {
+            // Normal mode: element in DOM with autoplay
+            this.audioEl.autoplay = true;
+            document.body.appendChild(this.audioEl);
+        }
 
         const shouldPlayAudio = !muteOnStart;
         this.pc.ontrack = (event) => {
