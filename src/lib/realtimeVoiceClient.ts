@@ -28,7 +28,6 @@ export class RealtimeVoiceClient {
     private assistantTranscript = "";
     private ephemeralToken = "";
     private _savedAudioTrack: MediaStreamTrack | null = null;
-    private textOnlyMode = false;
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
 
@@ -38,10 +37,9 @@ export class RealtimeVoiceClient {
 
     // ── Public API ───────────────────────────────────────────
 
-    async start(context?: string, textOnly = false): Promise<void> {
+    async start(context?: string, muteAudio = false): Promise<void> {
         // Save context for session config
         this.contextStr = context ?? "";
-        this.textOnlyMode = textOnly;
 
         // 1. Fetch ephemeral token from our server route
         this.ephemeralToken = await this.fetchEphemeralToken();
@@ -62,22 +60,22 @@ export class RealtimeVoiceClient {
         };
 
         // 3. Set up remote audio playback
-        if (textOnly) {
-            // Text-only mode: no audio element, no playback
-            // OpenAI won't generate audio with modalities: ["text"]
-            this.audioEl = null;
-        } else {
-            this.audioEl = document.createElement("audio");
-            this.audioEl.autoplay = true;
-            this.audioEl.setAttribute("playsinline", "true");
-            this.audioEl.style.display = "none";
-            document.body.appendChild(this.audioEl);
+        this.audioEl = document.createElement("audio");
+        this.audioEl.autoplay = true;
+        this.audioEl.setAttribute("playsinline", "true");
+        // Edge TTS mode: silence OpenAI voice but keep the entire WebRTC pipeline
+        if (muteAudio) {
+            this.audioEl.volume = 0;
         }
+        // Attach to DOM for better mobile audio handling
+        this.audioEl.style.display = "none";
+        document.body.appendChild(this.audioEl);
 
         this.pc.ontrack = (event) => {
             logger.warn("Remote track received:", event.track.kind);
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
+                // Ensure playback starts (needed on mobile)
                 this.audioEl.play().catch(() => {
                     logger.warn("Auto-play blocked, user interaction needed");
                 });
@@ -159,32 +157,6 @@ export class RealtimeVoiceClient {
             this.audioEl = null;
         }
         this.assistantTranscript = "";
-    }
-
-    /** Disable mic track (simple — no replaceTrack, just track.enabled) */
-    disableMic(): void {
-        if (!this.localStream) return;
-        for (const track of this.localStream.getAudioTracks()) {
-            track.enabled = false;
-        }
-    }
-
-    /** Re-enable mic track */
-    enableMic(): void {
-        if (!this.localStream) return;
-        for (const track of this.localStream.getAudioTracks()) {
-            track.enabled = true;
-        }
-    }
-
-    /** Clear OpenAI's audio input buffer (discard echo audio from Edge TTS) */
-    clearAudioBuffer(): void {
-        if (!this.dc || this.dc.readyState !== "open") return;
-        const clearEvent: RealtimeClientEvent = {
-            type: "input_audio_buffer.clear",
-        };
-        this.dc.send(JSON.stringify(clearEvent));
-        logger.warn("Audio buffer cleared (discarding echo)");
     }
 
     /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */
@@ -285,7 +257,7 @@ export class RealtimeVoiceClient {
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
-                modalities: this.textOnlyMode ? ["text"] : ["text", "audio"],
+                modalities: ["text", "audio"],
                 instructions: `Ты — Экзокортекс, голосовой ИИ-помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
 
 Твои принципы:
@@ -361,27 +333,6 @@ ${this.contextStr}`,
 
             case "response.audio.done":
                 this.callbacks.onAudioEnd();
-                break;
-
-            // ── Text-only mode events (when modalities: ["text"]) ──
-            case "response.text.delta":
-                if (this.assistantTranscript === "") {
-                    this.callbacks.onAudioStart();
-                }
-                this.assistantTranscript += parsed.delta;
-                this.callbacks.onTranscriptAssistant(
-                    this.assistantTranscript,
-                );
-                break;
-
-            case "response.text.done":
-                this.assistantTranscript = "";
-                // In text-only mode, this replaces response.audio.done
-                this.callbacks.onAudioEnd();
-                break;
-
-            case "response.output_item.done":
-                // Consumed silently — response complete
                 break;
 
             case "response.done": {

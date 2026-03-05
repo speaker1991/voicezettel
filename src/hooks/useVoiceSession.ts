@@ -16,9 +16,6 @@ import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
 
-/** Separate audio element for Edge TTS (created during user gesture) */
-let edgeTtsAudioEl: HTMLAudioElement | null = null;
-
 export function useVoiceSession() {
     const clientRef = useRef<RealtimeVoiceClient | null>(null);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -34,16 +31,13 @@ export function useVoiceSession() {
     const setOrbState = useChatStore((s) => s.setOrbState);
     const setModality = useChatStore((s) => s.setModality);
 
+    // Edge TTS (only used when ttsProvider === "edge")
     const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
 
+    // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
     const userTranscriptReceived = useRef(false);
     const lastAssistantText = useRef("");
-
-    // Flag: true while Edge TTS is playing.
-    // ALL callbacks are blocked while this is true — mic stays on but
-    // any echo that OpenAI processes gets silently discarded in the callback.
-    const edgeTtsSpeaking = useRef(false);
 
     const stopVoiceInternal = useCallback(() => {
         if (clientRef.current) {
@@ -51,7 +45,6 @@ export function useVoiceSession() {
             clientRef.current = null;
         }
         stopEdgeTTS();
-        edgeTtsSpeaking.current = false;
         isAssistantResponding.current = false;
         userTranscriptReceived.current = false;
         setIsVoiceActive(false);
@@ -66,15 +59,7 @@ export function useVoiceSession() {
         const useEdge = ttsProvider === "edge";
 
         setModality("voice");
-        setOrbState("listening");
-
-        // Create Edge TTS audio element during user gesture (mobile autoplay compat)
-        if (useEdge && !edgeTtsAudioEl) {
-            edgeTtsAudioEl = document.createElement("audio");
-            edgeTtsAudioEl.setAttribute("playsinline", "true");
-            edgeTtsAudioEl.style.display = "none";
-            document.body.appendChild(edgeTtsAudioEl);
-        }
+        setOrbState("listening"); // Show listening while connecting
 
         const callbacks: VoiceClientCallbacks = {
             onConnected: () => {
@@ -82,10 +67,6 @@ export function useVoiceSession() {
             },
 
             onTranscriptUser: (text: string) => {
-                // NOTE: Do NOT block with edgeTtsSpeaking flag here!
-                // Whisper transcripts arrive async, often AFTER response.text.done
-                // so blocking here causes user messages to disappear from chat.
-
                 const userMsg = {
                     id: crypto.randomUUID(),
                     role: "user" as const,
@@ -94,6 +75,7 @@ export function useVoiceSession() {
                     source: "voice" as const,
                 };
 
+                // Check if last message is from assistant (AI responded before transcript arrived)
                 const messages = useChatStore.getState().messages;
                 const lastMsg = messages[messages.length - 1];
                 if (lastMsg && lastMsg.role === "assistant") {
@@ -104,9 +86,6 @@ export function useVoiceSession() {
             },
 
             onTranscriptAssistant: (accumulated: string) => {
-                // Block echo responses during Edge TTS
-                if (edgeTtsSpeaking.current) return;
-
                 lastAssistantText.current = accumulated;
                 if (!isAssistantResponding.current) {
                     isAssistantResponding.current = true;
@@ -124,25 +103,26 @@ export function useVoiceSession() {
             },
 
             onAudioStart: () => {
-                if (edgeTtsSpeaking.current) return;
+                // Double-mute in case speech_stopped didn't fire
+                clientRef.current?.muteMic();
                 setOrbState("speaking");
             },
 
             onUserSpeechStarted: () => {
-                if (edgeTtsSpeaking.current) return;
                 setOrbState("listening");
             },
 
             onUserSpeechStopped: () => {
-                if (edgeTtsSpeaking.current) return;
+                // Mute mic immediately — AI will respond soon
+                clientRef.current?.muteMic();
                 setOrbState("thinking");
             },
 
             onAudioEnd: () => {
-                // Block echo response completion during Edge TTS
-                if (edgeTtsSpeaking.current) return;
+                // Unmute mic for next user turn
+                clientRef.current?.unmuteMic();
 
-                // Detect counter type
+                // Detect counter type from AI response
                 const counterType = detectCounterType(
                     lastAssistantText.current,
                 );
@@ -150,95 +130,22 @@ export function useVoiceSession() {
                     useAnimationStore
                         .getState()
                         .triggerAnimation(counterType);
+                    // Strip tag from displayed message
                     const cleaned = stripCounterTag(
                         lastAssistantText.current,
                     );
                     updateLastAssistantMessage({ content: cleaned });
                 }
 
-                // ── Edge TTS: speak the response ──
+                // ── Edge TTS overlay: speak after OpenAI audio finishes ──
                 if (useEdge && lastAssistantText.current) {
                     const textToSpeak = counterType
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
-
-                    // Block ALL callbacks during Edge TTS playback
-                    edgeTtsSpeaking.current = true;
-                    setOrbState("speaking");
-
-                    const savedText = lastAssistantText.current;
-                    isAssistantResponding.current = false;
-                    userTranscriptReceived.current = false;
-                    lastAssistantText.current = "";
-
-                    void speakEdgeTTS(textToSpeak, () => {
-                        // Edge TTS finished — clear audio buffer, unblock callbacks
-                        clientRef.current?.clearAudioBuffer();
-
-                        // Delay to let buffer clear propagate
-                        setTimeout(() => {
-                            edgeTtsSpeaking.current = false;
-                            setOrbState("listening");
-                        }, 300);
-
-                        // Post-response processing
-                        const aiText = counterType
-                            ? stripCounterTag(savedText)
-                            : savedText;
-                        if (aiText) {
-                            const msgs = useChatStore.getState().messages;
-                            const lastUser = [...msgs]
-                                .reverse()
-                                .find((m) => m.role === "user");
-                            if (lastUser) {
-                                sendToObsidian(lastUser.content, aiText).catch(
-                                    () => { /* handled inside */ },
-                                );
-                            }
-                        }
-                        const userMsgForMem = [...useChatStore.getState().messages]
-                            .reverse()
-                            .find((m) => m.role === "user");
-                        fetch("/api/voice-memory", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                userId,
-                                userText: userMsgForMem?.content,
-                                assistantText: aiText || savedText,
-                            }),
-                        })
-                            .then((res) => res.json())
-                            .then((data: { counterTags?: string[] }) => {
-                                if (data.counterTags && data.counterTags.length > 0) {
-                                    for (const tag of data.counterTags) {
-                                        const match = /\[COUNTER:(ideas|facts|persons|tasks)\]/i.exec(tag);
-                                        if (match) {
-                                            useAnimationStore
-                                                .getState()
-                                                .triggerAnimation(match[1].toLowerCase() as "ideas" | "facts" | "persons" | "tasks");
-                                        }
-                                    }
-                                }
-                            })
-                            .catch(() => { /* silent */ });
-                    }, edgeTtsAudioEl);
-
-                    // Safety timeout: if onEnded never fires (audio failed to play),
-                    // force-reset the flag after 15 seconds to prevent permanent lockout
-                    setTimeout(() => {
-                        if (edgeTtsSpeaking.current) {
-                            logger.warn("Edge TTS safety timeout — force resetting flag");
-                            clientRef.current?.clearAudioBuffer();
-                            edgeTtsSpeaking.current = false;
-                            setOrbState("listening");
-                        }
-                    }, 15000);
-
-                    return;
+                    void speakEdgeTTS(textToSpeak);
                 }
 
-                // ── Standard (browser) mode ──
+                // ── Auto-send to Obsidian (fire-and-forget) ──
                 const aiText = counterType
                     ? stripCounterTag(lastAssistantText.current)
                     : lastAssistantText.current;
@@ -249,11 +156,14 @@ export function useVoiceSession() {
                         .find((m) => m.role === "user");
                     if (lastUser) {
                         sendToObsidian(lastUser.content, aiText).catch(
-                            () => { /* handled inside */ },
+                            () => {
+                                /* handled inside sendToObsidian */
+                            },
                         );
                     }
                 }
 
+                // ── Save to memory store + classify ──
                 const userMsgForMem = [...useChatStore.getState().messages]
                     .reverse()
                     .find((m) => m.role === "user");
@@ -311,6 +221,7 @@ export function useVoiceSession() {
         clientRef.current = client;
 
         try {
+            // Fetch context (memory + vault + chat) for voice instructions
             let voiceContext = "";
             try {
                 const msgs = useChatStore.getState().messages;
@@ -330,7 +241,7 @@ export function useVoiceSession() {
                     voiceContext = ctxData.context ?? "";
                 }
             } catch {
-                // Context fetch failed silently
+                // Context fetch failed silently — voice still works
             }
 
             await client.start(voiceContext, useEdge);
