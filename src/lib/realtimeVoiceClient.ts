@@ -17,6 +17,12 @@ export interface VoiceClientCallbacks {
     onUserSpeechStarted: () => void;
     onUserSpeechStopped: () => void;
     onTokenUsage?: (usage: { textIn: number; textOut: number; audioIn: number; audioOut: number }) => void;
+    /** Called when text-only response is complete (for ElevenLabs TTS) */
+    onTextResponseDone?: (text: string) => void;
+}
+
+export interface VoiceClientOptions {
+    disableAudioOutput?: boolean;
 }
 
 // ── Client class ─────────────────────────────────────────────
@@ -31,8 +37,11 @@ export class RealtimeVoiceClient {
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
 
-    constructor(callbacks: VoiceClientCallbacks) {
+    private disableAudioOutput = false;
+
+    constructor(callbacks: VoiceClientCallbacks, options?: VoiceClientOptions) {
         this.callbacks = callbacks;
+        this.disableAudioOutput = options?.disableAudioOutput ?? false;
     }
 
     // ── Public API ───────────────────────────────────────────
@@ -69,6 +78,11 @@ export class RealtimeVoiceClient {
 
         this.pc.ontrack = (event) => {
             logger.warn("Remote track received:", event.track.kind);
+            // In ElevenLabs mode, mute OpenAI audio output (we don't need it)
+            if (this.disableAudioOutput) {
+                logger.warn("Muting OpenAI audio track (ElevenLabs mode)");
+                return;
+            }
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
                 // Ensure playback starts (needed on mobile)
@@ -253,7 +267,7 @@ export class RealtimeVoiceClient {
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
-                modalities: ["text", "audio"],
+                modalities: this.disableAudioOutput ? ["text"] : ["text", "audio"],
                 instructions: `Ты — Экзокортекс, голосовой ИИ-помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
 
 Твои принципы:
@@ -329,6 +343,30 @@ ${this.contextStr}`,
 
             case "response.audio.done":
                 this.callbacks.onAudioEnd();
+                break;
+
+            // ── Text-only mode events (ElevenLabs) ──
+            case "response.text.delta":
+                if (this.assistantTranscript === "") {
+                    this.callbacks.onAudioStart();
+                }
+                this.assistantTranscript += parsed.delta;
+                this.callbacks.onTranscriptAssistant(
+                    this.assistantTranscript,
+                );
+                break;
+
+            case "response.text.done":
+                if (this.callbacks.onTextResponseDone) {
+                    this.callbacks.onTextResponseDone(this.assistantTranscript);
+                }
+                this.assistantTranscript = "";
+                break;
+
+            case "response.output_item.done":
+                if (this.disableAudioOutput) {
+                    this.callbacks.onAudioEnd();
+                }
                 break;
 
             case "response.done": {

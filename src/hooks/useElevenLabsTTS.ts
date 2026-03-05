@@ -6,18 +6,22 @@ import { useSettingsStore } from "@/stores/settingsStore";
 /**
  * Hook for ElevenLabs text-to-speech.
  * Sends text to /api/tts proxy, plays the returned audio stream.
+ * Supports optional onEnded callback for orb state synchronization.
  */
 export function useElevenLabsTTS() {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const urlRef = useRef<string | null>(null);
 
-    const speak = useCallback(async (text: string) => {
+    const speak = useCallback(async (text: string, onEnded?: () => void) => {
         // Strip COUNTER tags before speaking
         const clean = text
             .replace(/\[COUNTER:[a-z]+\]/gi, "")
             .replace(/⚠️/g, "")
             .trim();
-        if (!clean || clean.length < 2) return;
+        if (!clean || clean.length < 2) {
+            onEnded?.();
+            return;
+        }
 
         try {
             // Stop previous playback
@@ -38,7 +42,10 @@ export function useElevenLabsTTS() {
                 body: JSON.stringify({ text: clean, voiceId }),
             });
 
-            if (!res.ok) return;
+            if (!res.ok) {
+                onEnded?.();
+                return;
+            }
 
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
@@ -53,13 +60,15 @@ export function useElevenLabsTTS() {
                     urlRef.current = null;
                 }
                 audioRef.current = null;
+                onEnded?.();
             };
 
             await audio.play().catch(() => {
                 /* autoplay blocked — silent fail */
+                onEnded?.();
             });
         } catch {
-            /* silent fail */
+            onEnded?.();
         }
     }, []);
 

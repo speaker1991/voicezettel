@@ -6,12 +6,14 @@ import {
     type VoiceClientCallbacks,
 } from "@/lib/realtimeVoiceClient";
 import { useChatStore } from "@/stores/chatStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useAnimationStore } from "@/stores/animationStore";
 import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
+import { useElevenLabsTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
 
 export function useVoiceSession() {
@@ -29,6 +31,9 @@ export function useVoiceSession() {
     const setOrbState = useChatStore((s) => s.setOrbState);
     const setModality = useChatStore((s) => s.setModality);
 
+    // ElevenLabs TTS
+    const { speak: speakElevenLabs, stop: stopElevenLabs } = useElevenLabsTTS();
+
     // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
     // Track if user transcript for current turn already arrived
@@ -36,20 +41,88 @@ export function useVoiceSession() {
     // Track accumulated AI response text for counter detection
     const lastAssistantText = useRef("");
 
+    /** Common post-response logic: counters, obsidian, memory */
+    const handleResponseEnd = useCallback((text: string) => {
+        // Detect counter type from AI response
+        const counterType = detectCounterType(text);
+        if (counterType) {
+            useAnimationStore
+                .getState()
+                .triggerAnimation(counterType);
+            // Strip tag from displayed message
+            const cleaned = stripCounterTag(text);
+            updateLastAssistantMessage({ content: cleaned });
+        }
+
+        // ── Auto-send to Obsidian (fire-and-forget) ──
+        const aiText = counterType
+            ? stripCounterTag(text)
+            : text;
+        if (aiText) {
+            const msgs = useChatStore.getState().messages;
+            const lastUser = [...msgs]
+                .reverse()
+                .find((m) => m.role === "user");
+            if (lastUser) {
+                sendToObsidian(lastUser.content, aiText).catch(
+                    () => {
+                        /* handled inside sendToObsidian */
+                    },
+                );
+            }
+        }
+
+        // ── Save to memory store + classify ──
+        const userMsgForMem = [...useChatStore.getState().messages]
+            .reverse()
+            .find((m) => m.role === "user");
+        fetch("/api/voice-memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                userId,
+                userText: userMsgForMem?.content,
+                assistantText: aiText || text,
+            }),
+        })
+            .then((res) => res.json())
+            .then((data: { counterTags?: string[] }) => {
+                if (data.counterTags && data.counterTags.length > 0) {
+                    for (const tag of data.counterTags) {
+                        const match = /\[COUNTER:(ideas|facts|persons|tasks)\]/i.exec(tag);
+                        if (match) {
+                            useAnimationStore
+                                .getState()
+                                .triggerAnimation(match[1].toLowerCase() as "ideas" | "facts" | "persons" | "tasks");
+                        }
+                    }
+                }
+            })
+            .catch(() => { /* silent */ });
+
+        isAssistantResponding.current = false;
+        userTranscriptReceived.current = false;
+        lastAssistantText.current = "";
+    }, [userId, updateLastAssistantMessage]);
+
     const stopVoiceInternal = useCallback(() => {
         if (clientRef.current) {
             clientRef.current.stop();
             clientRef.current = null;
         }
+        stopElevenLabs();
         isAssistantResponding.current = false;
         userTranscriptReceived.current = false;
         setIsVoiceActive(false);
         setOrbState("idle");
         setModality("text");
-    }, [setOrbState, setModality]);
+    }, [setOrbState, setModality, stopElevenLabs]);
 
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
+
+        const ttsProvider = useSettingsStore.getState().ttsProvider;
+        const useElevenLabs = ttsProvider === "elevenlabs";
 
         setModality("voice");
         setOrbState("listening"); // Show listening while connecting
@@ -112,74 +185,31 @@ export function useVoiceSession() {
             },
 
             onAudioEnd: () => {
-                // Unmute mic for next user turn
+                if (useElevenLabs) {
+                    // In ElevenLabs mode, onAudioEnd fires from
+                    // response.output_item.done — but TTS playback
+                    // may still be in progress. Don't unmute yet.
+                    // The onEnded callback in speakElevenLabs handles this.
+                    return;
+                }
+
+                // Standard OpenAI audio mode — unmute and process
                 clientRef.current?.unmuteMic();
-
-                // Detect counter type from AI response
-                const counterType = detectCounterType(
-                    lastAssistantText.current,
-                );
-                if (counterType) {
-                    useAnimationStore
-                        .getState()
-                        .triggerAnimation(counterType);
-                    // Strip tag from displayed message
-                    const cleaned = stripCounterTag(
-                        lastAssistantText.current,
-                    );
-                    updateLastAssistantMessage({ content: cleaned });
-                }
-
-                // ── Auto-send to Obsidian (fire-and-forget) ──
-                const aiText = counterType
-                    ? stripCounterTag(lastAssistantText.current)
-                    : lastAssistantText.current;
-                if (aiText) {
-                    const msgs = useChatStore.getState().messages;
-                    const lastUser = [...msgs]
-                        .reverse()
-                        .find((m) => m.role === "user");
-                    if (lastUser) {
-                        sendToObsidian(lastUser.content, aiText).catch(
-                            () => {
-                                /* handled inside sendToObsidian */
-                            },
-                        );
-                    }
-                }
-
-                // ── Save to memory store + classify ──
-                const userMsgForMem = [...useChatStore.getState().messages]
-                    .reverse()
-                    .find((m) => m.role === "user");
-                fetch("/api/voice-memory", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        userId,
-                        userText: userMsgForMem?.content,
-                        assistantText: aiText || lastAssistantText.current,
-                    }),
-                })
-                    .then((res) => res.json())
-                    .then((data: { counterTags?: string[] }) => {
-                        if (data.counterTags && data.counterTags.length > 0) {
-                            for (const tag of data.counterTags) {
-                                const match = /\[COUNTER:(ideas|facts|persons|tasks)\]/i.exec(tag);
-                                if (match) {
-                                    useAnimationStore
-                                        .getState()
-                                        .triggerAnimation(match[1].toLowerCase() as "ideas" | "facts" | "persons" | "tasks");
-                                }
-                            }
-                        }
-                    })
-                    .catch(() => { /* silent */ });
-
-                isAssistantResponding.current = false;
-                userTranscriptReceived.current = false;
-                lastAssistantText.current = "";
+                handleResponseEnd(lastAssistantText.current);
                 setOrbState("listening");
+            },
+
+            /** ElevenLabs: full text response ready — speak it */
+            onTextResponseDone: (text: string) => {
+                if (!useElevenLabs) return;
+
+                const cleaned = stripCounterTag(text);
+                void speakElevenLabs(cleaned, () => {
+                    // Playback finished — return to listening
+                    clientRef.current?.unmuteMic();
+                    handleResponseEnd(text);
+                    setOrbState("listening");
+                });
             },
 
             onSessionError: (err: Error) => {
@@ -202,7 +232,9 @@ export function useVoiceSession() {
             },
         };
 
-        const client = new RealtimeVoiceClient(callbacks);
+        const client = new RealtimeVoiceClient(callbacks, {
+            disableAudioOutput: useElevenLabs,
+        });
         clientRef.current = client;
 
         try {
@@ -254,6 +286,8 @@ export function useVoiceSession() {
         setOrbState,
         setModality,
         stopVoiceInternal,
+        speakElevenLabs,
+        handleResponseEnd,
     ]);
 
     const stopVoice = useCallback(() => {

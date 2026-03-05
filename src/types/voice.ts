@@ -103,6 +103,17 @@ export type RealtimeServerEvent =
         type: "session.updated";
     }
     | {
+        type: "response.text.delta";
+        delta: string;
+    }
+    | {
+        type: "response.text.done";
+        text: string;
+    }
+    | {
+        type: "response.output_item.done";
+    }
+    | {
         type: "error";
         error: {
             message: string;
