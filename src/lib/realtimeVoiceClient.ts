@@ -28,6 +28,7 @@ export class RealtimeVoiceClient {
     private assistantTranscript = "";
     private ephemeralToken = "";
     private _savedAudioTrack: MediaStreamTrack | null = null;
+    private textOnlyMode = false;
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
 
@@ -40,6 +41,7 @@ export class RealtimeVoiceClient {
     async start(context?: string, muteAudio = false): Promise<void> {
         // Save context for session config
         this.contextStr = context ?? "";
+        this.textOnlyMode = muteAudio;
 
         // 1. Fetch ephemeral token from our server route
         this.ephemeralToken = await this.fetchEphemeralToken();
@@ -63,10 +65,6 @@ export class RealtimeVoiceClient {
         this.audioEl = document.createElement("audio");
         this.audioEl.autoplay = true;
         this.audioEl.setAttribute("playsinline", "true");
-        // Edge TTS mode: silence OpenAI voice but keep the entire WebRTC pipeline
-        if (muteAudio) {
-            this.audioEl.volume = 0;
-        }
         // Attach to DOM for better mobile audio handling
         this.audioEl.style.display = "none";
         document.body.appendChild(this.audioEl);
@@ -257,7 +255,7 @@ export class RealtimeVoiceClient {
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
-                modalities: ["text", "audio"],
+                modalities: this.textOnlyMode ? ["text"] : ["text", "audio"],
                 instructions: `Ты — Экзокортекс, голосовой ИИ-помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
 
 Твои принципы:
@@ -332,6 +330,24 @@ ${this.contextStr}`,
                 break;
 
             case "response.audio.done":
+                this.callbacks.onAudioEnd();
+                break;
+
+            // ── Text-only mode events (when modalities: ["text"]) ──
+            // Map to same callbacks so muteMic/unmuteMic cycle works identically
+            case "response.text.delta":
+                if (this.assistantTranscript === "") {
+                    this.callbacks.onAudioStart();
+                }
+                this.assistantTranscript += parsed.delta;
+                this.callbacks.onTranscriptAssistant(
+                    this.assistantTranscript,
+                );
+                break;
+
+            case "response.text.done":
+                this.assistantTranscript = "";
+                // This fires unmuteMic() via onAudioEnd — critical for mic restore
                 this.callbacks.onAudioEnd();
                 break;
 
