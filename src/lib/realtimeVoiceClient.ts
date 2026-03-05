@@ -28,6 +28,7 @@ export class RealtimeVoiceClient {
     private assistantTranscript = "";
     private ephemeralToken = "";
     private _savedAudioTrack: MediaStreamTrack | null = null;
+    private textOnlyMode = false;
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
 
@@ -37,9 +38,10 @@ export class RealtimeVoiceClient {
 
     // ── Public API ───────────────────────────────────────────
 
-    async start(context?: string, muteOnStart = false): Promise<void> {
+    async start(context?: string, textOnly = false): Promise<void> {
         // Save context for session config
         this.contextStr = context ?? "";
+        this.textOnlyMode = textOnly;
 
         // 1. Fetch ephemeral token from our server route
         this.ephemeralToken = await this.fetchEphemeralToken();
@@ -60,29 +62,25 @@ export class RealtimeVoiceClient {
         };
 
         // 3. Set up remote audio playback
-        this.audioEl = document.createElement("audio");
-        this.audioEl.setAttribute("playsinline", "true");
-        this.audioEl.style.display = "none";
-
-        if (muteOnStart) {
-            // Edge TTS mode: element NOT in DOM → no audio plays
-            // But srcObject is still set → WebRTC stream consumed → connection healthy
+        if (textOnly) {
+            // Text-only mode: no audio element, no playback
+            // OpenAI won't generate audio with modalities: ["text"]
+            this.audioEl = null;
         } else {
-            // Normal mode: element in DOM with autoplay
+            this.audioEl = document.createElement("audio");
             this.audioEl.autoplay = true;
+            this.audioEl.setAttribute("playsinline", "true");
+            this.audioEl.style.display = "none";
             document.body.appendChild(this.audioEl);
         }
 
-        const shouldPlayAudio = !muteOnStart;
         this.pc.ontrack = (event) => {
             logger.warn("Remote track received:", event.track.kind);
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
-                if (shouldPlayAudio) {
-                    this.audioEl.play().catch(() => {
-                        logger.warn("Auto-play blocked, user interaction needed");
-                    });
-                }
+                this.audioEl.play().catch(() => {
+                    logger.warn("Auto-play blocked, user interaction needed");
+                });
             }
         };
 
@@ -266,7 +264,7 @@ export class RealtimeVoiceClient {
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
-                modalities: ["text", "audio"],
+                modalities: this.textOnlyMode ? ["text"] : ["text", "audio"],
                 instructions: `Ты — Экзокортекс, голосовой ИИ-помощник VoiceZettel. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
 
 Твои принципы:
@@ -342,6 +340,27 @@ ${this.contextStr}`,
 
             case "response.audio.done":
                 this.callbacks.onAudioEnd();
+                break;
+
+            // ── Text-only mode events (when modalities: ["text"]) ──
+            case "response.text.delta":
+                if (this.assistantTranscript === "") {
+                    this.callbacks.onAudioStart();
+                }
+                this.assistantTranscript += parsed.delta;
+                this.callbacks.onTranscriptAssistant(
+                    this.assistantTranscript,
+                );
+                break;
+
+            case "response.text.done":
+                this.assistantTranscript = "";
+                // In text-only mode, this replaces response.audio.done
+                this.callbacks.onAudioEnd();
+                break;
+
+            case "response.output_item.done":
+                // Consumed silently — response complete
                 break;
 
             case "response.done": {
