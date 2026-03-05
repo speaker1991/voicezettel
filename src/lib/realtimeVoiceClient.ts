@@ -63,24 +63,21 @@ export class RealtimeVoiceClient {
         this.audioEl = document.createElement("audio");
         this.audioEl.autoplay = true;
         this.audioEl.setAttribute("playsinline", "true");
+        // In Edge TTS mode: mute OpenAI audio via HTML muted attribute
+        // (audio.muted is respected by iOS, unlike audio.volume = 0)
+        // We still attach the stream so WebRTC connection fully establishes
+        if (muteOnStart) {
+            this.audioEl.muted = true;
+        }
         // Attach to DOM for better mobile audio handling
         this.audioEl.style.display = "none";
         document.body.appendChild(this.audioEl);
 
-        // Save mute flag for ontrack
-        const skipAudioPlayback = muteOnStart;
-
         this.pc.ontrack = (event) => {
             logger.warn("Remote track received:", event.track.kind);
-            // In Edge TTS mode: skip attaching OpenAI audio stream
-            // (iOS ignores audio.volume=0, so we must not play it at all)
-            if (skipAudioPlayback) {
-                logger.warn("Skipping OpenAI audio playback (Edge TTS mode)");
-                return;
-            }
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
-                // Ensure playback starts (needed on mobile)
+                // Ensure playback starts (needed on mobile + WebRTC health)
                 this.audioEl.play().catch(() => {
                     logger.warn("Auto-play blocked, user interaction needed");
                 });
