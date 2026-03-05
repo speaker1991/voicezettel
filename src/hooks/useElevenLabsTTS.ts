@@ -6,13 +6,22 @@ import { useSettingsStore } from "@/stores/settingsStore";
 /**
  * Hook for Edge TTS (Microsoft neural voices).
  * Sends text to /api/tts proxy, plays the returned audio.
- * Supports optional onEnded callback for orb state synchronization.
+ * Supports optional onEnded callback and external audio element for mobile autoplay.
  */
 export function useEdgeTTS() {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const urlRef = useRef<string | null>(null);
 
-    const speak = useCallback(async (text: string, onEnded?: () => void) => {
+    /**
+     * @param text - Text to speak
+     * @param onEnded - Optional callback when playback finishes
+     * @param externalAudioEl - Optional audio element to reuse (for mobile autoplay)
+     */
+    const speak = useCallback(async (
+        text: string,
+        onEnded?: () => void,
+        externalAudioEl?: HTMLAudioElement | null,
+    ) => {
         // Strip COUNTER tags before speaking
         const clean = text
             .replace(/\[COUNTER:[a-z]+\]/gi, "")
@@ -25,7 +34,7 @@ export function useEdgeTTS() {
 
         try {
             // Stop previous playback
-            if (audioRef.current) {
+            if (audioRef.current && !externalAudioEl) {
                 audioRef.current.pause();
                 audioRef.current = null;
             }
@@ -51,7 +60,9 @@ export function useEdgeTTS() {
             const url = URL.createObjectURL(blob);
             urlRef.current = url;
 
-            const audio = new Audio(url);
+            // Use external audio element if provided (avoids iOS autoplay block)
+            const audio = externalAudioEl ?? new Audio();
+            audio.src = url;
             audioRef.current = audio;
 
             audio.onended = () => {
@@ -59,7 +70,9 @@ export function useEdgeTTS() {
                     URL.revokeObjectURL(urlRef.current);
                     urlRef.current = null;
                 }
-                audioRef.current = null;
+                if (!externalAudioEl) {
+                    audioRef.current = null;
+                }
                 onEnded?.();
             };
 
@@ -75,6 +88,7 @@ export function useEdgeTTS() {
     const stop = useCallback(() => {
         if (audioRef.current) {
             audioRef.current.pause();
+            audioRef.current.src = "";
             audioRef.current = null;
         }
         if (urlRef.current) {

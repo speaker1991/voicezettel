@@ -164,18 +164,9 @@ export class RealtimeVoiceClient {
         this.assistantTranscript = "";
     }
 
-    /** Mute OpenAI audio output (volume = 0, still plays for WebRTC health) */
-    muteOutput(): void {
-        if (this.audioEl) {
-            this.audioEl.volume = 0;
-        }
-    }
-
-    /** Unmute OpenAI audio output */
-    unmuteOutput(): void {
-        if (this.audioEl) {
-            this.audioEl.volume = 1;
-        }
+    /** Get the audio element (created during user gesture, safe for mobile autoplay) */
+    getAudioElement(): HTMLAudioElement | null {
+        return this.audioEl;
     }
 
     /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */

@@ -139,12 +139,14 @@ export function useVoiceSession() {
                     updateLastAssistantMessage({ content: cleaned });
                 }
 
-                // ── ElevenLabs TTS: speak the response ──
+                // ── Edge TTS: speak the response ──
                 if (useElevenLabs && lastAssistantText.current) {
                     const textToSpeak = counterType
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
-                    void speakEdgeTTS(textToSpeak);
+                    // Pass the audio element from WebRTC client (created during user gesture)
+                    const audioEl = clientRef.current?.getAudioElement();
+                    void speakEdgeTTS(textToSpeak, undefined, audioEl);
                 }
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──
