@@ -82,8 +82,9 @@ export function useVoiceSession() {
             },
 
             onTranscriptUser: (text: string) => {
-                // Block echo transcripts during Edge TTS
-                if (edgeTtsSpeaking.current) return;
+                // NOTE: Do NOT block with edgeTtsSpeaking flag here!
+                // Whisper transcripts arrive async, often AFTER response.text.done
+                // so blocking here causes user messages to disappear from chat.
 
                 const userMsg = {
                     id: crypto.randomUUID(),
@@ -174,7 +175,7 @@ export function useVoiceSession() {
                         // Edge TTS finished — clear audio buffer, unblock callbacks
                         clientRef.current?.clearAudioBuffer();
 
-                        // Small delay to let buffer clear propagate before unblocking
+                        // Delay to let buffer clear propagate
                         setTimeout(() => {
                             edgeTtsSpeaking.current = false;
                             setOrbState("listening");
@@ -222,6 +223,17 @@ export function useVoiceSession() {
                             })
                             .catch(() => { /* silent */ });
                     }, edgeTtsAudioEl);
+
+                    // Safety timeout: if onEnded never fires (audio failed to play),
+                    // force-reset the flag after 15 seconds to prevent permanent lockout
+                    setTimeout(() => {
+                        if (edgeTtsSpeaking.current) {
+                            logger.warn("Edge TTS safety timeout — force resetting flag");
+                            clientRef.current?.clearAudioBuffer();
+                            edgeTtsSpeaking.current = false;
+                            setOrbState("listening");
+                        }
+                    }, 15000);
 
                     return;
                 }
