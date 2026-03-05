@@ -16,7 +16,7 @@ import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
 
-/** Ref to a separate audio element for Edge TTS (created during user gesture) */
+/** Separate audio element for Edge TTS (created during user gesture) */
 let edgeTtsAudioEl: HTMLAudioElement | null = null;
 
 export function useVoiceSession() {
@@ -34,15 +34,15 @@ export function useVoiceSession() {
     const setOrbState = useChatStore((s) => s.setOrbState);
     const setModality = useChatStore((s) => s.setModality);
 
-    // Edge TTS hook
     const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
 
-    // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
     const userTranscriptReceived = useRef(false);
     const lastAssistantText = useRef("");
 
-    // Flag: true while Edge TTS is playing → ignore VAD events
+    // Flag: true while Edge TTS is playing.
+    // ALL callbacks are blocked while this is true — mic stays on but
+    // any echo that OpenAI processes gets silently discarded in the callback.
     const edgeTtsSpeaking = useRef(false);
 
     const stopVoiceInternal = useCallback(() => {
@@ -68,8 +68,7 @@ export function useVoiceSession() {
         setModality("voice");
         setOrbState("listening");
 
-        // Create a separate audio element for Edge TTS during user gesture
-        // (mobile browsers require audio elements created in user interaction context)
+        // Create Edge TTS audio element during user gesture (mobile autoplay compat)
         if (useEdge && !edgeTtsAudioEl) {
             edgeTtsAudioEl = document.createElement("audio");
             edgeTtsAudioEl.setAttribute("playsinline", "true");
@@ -83,6 +82,9 @@ export function useVoiceSession() {
             },
 
             onTranscriptUser: (text: string) => {
+                // Block echo transcripts during Edge TTS
+                if (edgeTtsSpeaking.current) return;
+
                 const userMsg = {
                     id: crypto.randomUUID(),
                     role: "user" as const,
@@ -101,6 +103,9 @@ export function useVoiceSession() {
             },
 
             onTranscriptAssistant: (accumulated: string) => {
+                // Block echo responses during Edge TTS
+                if (edgeTtsSpeaking.current) return;
+
                 lastAssistantText.current = accumulated;
                 if (!isAssistantResponding.current) {
                     isAssistantResponding.current = true;
@@ -118,24 +123,25 @@ export function useVoiceSession() {
             },
 
             onAudioStart: () => {
+                if (edgeTtsSpeaking.current) return;
                 setOrbState("speaking");
             },
 
             onUserSpeechStarted: () => {
-                // IGNORE VAD events while Edge TTS is playing
-                // (Edge TTS audio gets picked up by mic → triggers false VAD)
                 if (edgeTtsSpeaking.current) return;
                 setOrbState("listening");
             },
 
             onUserSpeechStopped: () => {
-                // IGNORE VAD events while Edge TTS is playing
                 if (edgeTtsSpeaking.current) return;
                 setOrbState("thinking");
             },
 
             onAudioEnd: () => {
-                // Detect counter type from AI response
+                // Block echo response completion during Edge TTS
+                if (edgeTtsSpeaking.current) return;
+
+                // Detect counter type
                 const counterType = detectCounterType(
                     lastAssistantText.current,
                 );
@@ -155,28 +161,24 @@ export function useVoiceSession() {
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
 
-                    // Set flag: ignore VAD events during Edge TTS playback
+                    // Block ALL callbacks during Edge TTS playback
                     edgeTtsSpeaking.current = true;
                     setOrbState("speaking");
 
-                    // Disable mic to prevent echo pickup
-                    clientRef.current?.disableMic();
-
-                    // Save text before clearing refs
                     const savedText = lastAssistantText.current;
                     isAssistantResponding.current = false;
                     userTranscriptReceived.current = false;
                     lastAssistantText.current = "";
 
                     void speakEdgeTTS(textToSpeak, () => {
-                        // Edge TTS finished:
-                        // 1. Clear any echo audio from OpenAI's buffer
+                        // Edge TTS finished — clear audio buffer, unblock callbacks
                         clientRef.current?.clearAudioBuffer();
-                        // 2. Re-enable mic
-                        clientRef.current?.enableMic();
-                        // 3. Clear the flag
-                        edgeTtsSpeaking.current = false;
-                        setOrbState("listening");
+
+                        // Small delay to let buffer clear propagate before unblocking
+                        setTimeout(() => {
+                            edgeTtsSpeaking.current = false;
+                            setOrbState("listening");
+                        }, 300);
 
                         // Post-response processing
                         const aiText = counterType
@@ -221,11 +223,10 @@ export function useVoiceSession() {
                             .catch(() => { /* silent */ });
                     }, edgeTtsAudioEl);
 
-                    return; // Skip normal post-response flow
+                    return;
                 }
 
-                // ── Standard (browser) mode: normal flow ──
-                // No separate TTS — OpenAI audio already played
+                // ── Standard (browser) mode ──
                 const aiText = counterType
                     ? stripCounterTag(lastAssistantText.current)
                     : lastAssistantText.current;
@@ -317,7 +318,7 @@ export function useVoiceSession() {
                     voiceContext = ctxData.context ?? "";
                 }
             } catch {
-                // Context fetch failed silently — voice still works
+                // Context fetch failed silently
             }
 
             await client.start(voiceContext, useEdge);
