@@ -29,26 +29,27 @@ export async function POST(req: NextRequest) {
 
         const { audioStream } = tts.toStream(text.slice(0, 5000));
 
-        // Collect stream into buffer
-        const chunks: Buffer[] = [];
-        await new Promise<void>((resolve, reject) => {
-            audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
-            audioStream.on("end", resolve);
-            audioStream.on("error", reject);
+        // Stream audio directly to client (no buffering = lower latency)
+        const readableStream = new ReadableStream({
+            start(controller) {
+                audioStream.on("data", (chunk: Buffer) => {
+                    controller.enqueue(new Uint8Array(chunk));
+                });
+                audioStream.on("end", () => {
+                    tts.close();
+                    controller.close();
+                });
+                audioStream.on("error", (err: Error) => {
+                    tts.close();
+                    controller.error(err);
+                });
+            },
         });
 
-        tts.close();
-
-        const audioBuffer = Buffer.concat(chunks);
-
-        if (audioBuffer.length === 0) {
-            return new Response("Empty audio", { status: 500 });
-        }
-
-        return new Response(audioBuffer, {
+        return new Response(readableStream, {
             headers: {
                 "Content-Type": "audio/mpeg",
-                "Content-Length": String(audioBuffer.length),
+                "Transfer-Encoding": "chunked",
                 "Cache-Control": "no-cache",
             },
         });
