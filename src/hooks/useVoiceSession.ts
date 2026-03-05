@@ -16,6 +16,9 @@ import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
 
+/** Ref to a separate audio element for Edge TTS (created during user gesture) */
+let edgeTtsAudioEl: HTMLAudioElement | null = null;
+
 export function useVoiceSession() {
     const clientRef = useRef<RealtimeVoiceClient | null>(null);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -62,6 +65,15 @@ export function useVoiceSession() {
 
         setModality("voice");
         setOrbState("listening"); // Show listening while connecting
+
+        // Create a separate audio element for Edge TTS during user gesture
+        // (iOS requires audio elements to be created in user interaction context)
+        if (useElevenLabs && !edgeTtsAudioEl) {
+            edgeTtsAudioEl = document.createElement("audio");
+            edgeTtsAudioEl.setAttribute("playsinline", "true");
+            edgeTtsAudioEl.style.display = "none";
+            document.body.appendChild(edgeTtsAudioEl);
+        }
 
         const callbacks: VoiceClientCallbacks = {
             onConnected: () => {
@@ -144,9 +156,7 @@ export function useVoiceSession() {
                     const textToSpeak = counterType
                         ? stripCounterTag(lastAssistantText.current)
                         : lastAssistantText.current;
-                    // Pass the audio element from WebRTC client (created during user gesture)
-                    const audioEl = clientRef.current?.getAudioElement();
-                    void speakEdgeTTS(textToSpeak, undefined, audioEl);
+                    void speakEdgeTTS(textToSpeak, undefined, edgeTtsAudioEl);
                 }
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──

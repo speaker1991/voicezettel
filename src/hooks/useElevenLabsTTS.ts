@@ -62,13 +62,6 @@ export function useEdgeTTS() {
 
             // Use external audio element if provided (avoids iOS autoplay block)
             const audio = externalAudioEl ?? new Audio();
-
-            // If reusing WebRTC audio element: disconnect OpenAI stream, unmute for Edge TTS
-            if (externalAudioEl) {
-                audio.srcObject = null;
-                audio.muted = false;
-            }
-
             audio.src = url;
             audioRef.current = audio;
 
@@ -77,10 +70,7 @@ export function useEdgeTTS() {
                     URL.revokeObjectURL(urlRef.current);
                     urlRef.current = null;
                 }
-                // Re-mute for next OpenAI audio cycle
-                if (externalAudioEl) {
-                    audio.muted = true;
-                } else {
+                if (!externalAudioEl) {
                     audioRef.current = null;
                 }
                 onEnded?.();
@@ -88,9 +78,6 @@ export function useEdgeTTS() {
 
             await audio.play().catch(() => {
                 /* autoplay blocked — silent fail */
-                if (externalAudioEl) {
-                    audio.muted = true;
-                }
                 onEnded?.();
             });
         } catch {
