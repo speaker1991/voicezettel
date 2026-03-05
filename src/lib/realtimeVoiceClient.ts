@@ -17,12 +17,6 @@ export interface VoiceClientCallbacks {
     onUserSpeechStarted: () => void;
     onUserSpeechStopped: () => void;
     onTokenUsage?: (usage: { textIn: number; textOut: number; audioIn: number; audioOut: number }) => void;
-    /** Called when text-only response is complete (for ElevenLabs TTS) */
-    onTextResponseDone?: (text: string) => void;
-}
-
-export interface VoiceClientOptions {
-    disableAudioOutput?: boolean;
 }
 
 // ── Client class ─────────────────────────────────────────────
@@ -37,11 +31,8 @@ export class RealtimeVoiceClient {
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
 
-    private disableAudioOutput = false;
-
-    constructor(callbacks: VoiceClientCallbacks, options?: VoiceClientOptions) {
+    constructor(callbacks: VoiceClientCallbacks) {
         this.callbacks = callbacks;
-        this.disableAudioOutput = options?.disableAudioOutput ?? false;
     }
 
     // ── Public API ───────────────────────────────────────────
@@ -78,11 +69,6 @@ export class RealtimeVoiceClient {
 
         this.pc.ontrack = (event) => {
             logger.warn("Remote track received:", event.track.kind);
-            // In ElevenLabs mode, mute OpenAI audio output (we don't need it)
-            if (this.disableAudioOutput) {
-                logger.warn("Muting OpenAI audio track (ElevenLabs mode)");
-                return;
-            }
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
                 // Ensure playback starts (needed on mobile)
@@ -167,6 +153,20 @@ export class RealtimeVoiceClient {
             this.audioEl = null;
         }
         this.assistantTranscript = "";
+    }
+
+    /** Mute OpenAI audio output (volume = 0, still plays for WebRTC health) */
+    muteOutput(): void {
+        if (this.audioEl) {
+            this.audioEl.volume = 0;
+        }
+    }
+
+    /** Unmute OpenAI audio output */
+    unmuteOutput(): void {
+        if (this.audioEl) {
+            this.audioEl.volume = 1;
+        }
     }
 
     /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */
@@ -338,42 +338,11 @@ ${this.contextStr}`,
                 break;
 
             case "response.audio_transcript.done":
-                // Signal that full transcript is ready (for ElevenLabs)
-                if (this.callbacks.onTextResponseDone && this.disableAudioOutput) {
-                    this.callbacks.onTextResponseDone(this.assistantTranscript);
-                }
                 this.assistantTranscript = "";
                 break;
 
             case "response.audio.done":
-                if (!this.disableAudioOutput) {
-                    this.callbacks.onAudioEnd();
-                }
-                break;
-
-            // ── Text-only mode events (ElevenLabs) ──
-            case "response.text.delta":
-                if (this.assistantTranscript === "") {
-                    this.callbacks.onAudioStart();
-                }
-                this.assistantTranscript += parsed.delta;
-                this.callbacks.onTranscriptAssistant(
-                    this.assistantTranscript,
-                );
-                break;
-
-            case "response.text.done":
-                if (this.callbacks.onTextResponseDone) {
-                    this.callbacks.onTextResponseDone(this.assistantTranscript);
-                }
-                this.assistantTranscript = "";
-                break;
-
-            case "response.output_item.done":
-                if (this.disableAudioOutput) {
-                    // In ElevenLabs mode, this signals end of AI response item
-                    // onAudioEnd is handled by ElevenLabs onEnded callback
-                }
+                this.callbacks.onAudioEnd();
                 break;
 
             case "response.done": {
