@@ -26,6 +26,7 @@ export interface CountersActions {
 
 // ── Settings store types ────────────────────────────────────
 export type AiProvider = "openai" | "google" | "deepseek";
+export type TtsProvider = "browser" | "elevenlabs";
 
 export interface SettingsState {
     showUsdTokens: boolean;
@@ -40,6 +41,8 @@ export interface SettingsState {
     zettelkastenPrompt: string;
     aiProvider: AiProvider;
     aiVoiceEnabled: boolean;
+    ttsProvider: TtsProvider;
+    elevenLabsVoiceId: string;
     obsidianApiKey: string;
     obsidianApiUrl: string;
 }
@@ -57,6 +60,8 @@ export interface SettingsActions {
     setZettelkastenPrompt: (value: string) => void;
     setAiProvider: (provider: AiProvider) => void;
     toggleAiVoiceEnabled: () => void;
+    setTtsProvider: (provider: TtsProvider) => void;
+    setElevenLabsVoiceId: (id: string) => void;
     setObsidianApiKey: (key: string) => void;
     setObsidianApiUrl: (url: string) => void;
 }

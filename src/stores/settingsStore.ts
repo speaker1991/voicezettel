@@ -30,6 +30,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 "Анализируйте входящий текст и классифицируйте информацию на: идеи, факты, персоны и задачи.",
             aiProvider: "deepseek",
             aiVoiceEnabled: true,
+            ttsProvider: "elevenlabs",
+            elevenLabsVoiceId: "EXAVITQu4vr4xnSDxMaL",
             obsidianApiKey: "",
             obsidianApiUrl: "http://127.0.0.1:27123",
 
@@ -53,6 +55,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
             setAiProvider: (provider) => set({ aiProvider: provider }),
             toggleAiVoiceEnabled: () =>
                 set((s) => ({ aiVoiceEnabled: !s.aiVoiceEnabled })),
+            setTtsProvider: (provider) => set({ ttsProvider: provider }),
+            setElevenLabsVoiceId: (id) => set({ elevenLabsVoiceId: id }),
             setObsidianApiKey: (key) => set({ obsidianApiKey: key }),
             setObsidianApiUrl: (url) => set({ obsidianApiUrl: url }),
         }),
@@ -72,10 +76,12 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 zettelkastenPrompt: state.zettelkastenPrompt,
                 aiProvider: state.aiProvider,
                 aiVoiceEnabled: state.aiVoiceEnabled,
+                ttsProvider: state.ttsProvider,
+                elevenLabsVoiceId: state.elevenLabsVoiceId,
                 obsidianApiKey: state.obsidianApiKey,
                 obsidianApiUrl: state.obsidianApiUrl,
             }),
-            version: 3,
+            version: 4,
             migrate: (persisted, version) => {
                 const state = persisted as Record<string, unknown>;
                 if (version < 2) {
@@ -89,6 +95,15 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                     // Switch from google to deepseek (Gemini free tier exhausted)
                     if (state.aiProvider === "google" || state.aiProvider === "openai") {
                         state.aiProvider = "deepseek";
+                    }
+                }
+                if (version < 4) {
+                    // Add TTS provider defaults
+                    if (!state.ttsProvider) {
+                        state.ttsProvider = "elevenlabs";
+                    }
+                    if (!state.elevenLabsVoiceId) {
+                        state.elevenLabsVoiceId = "EXAVITQu4vr4xnSDxMaL";
                     }
                 }
                 return state;

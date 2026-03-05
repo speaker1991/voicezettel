@@ -2,6 +2,8 @@
 
 import { useRef, useEffect } from "react";
 import { useChatStore } from "@/stores/chatStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useElevenLabsTTS } from "@/hooks/useElevenLabsTTS";
 import type { Message } from "@/types/chat";
 
 function bubbleClasses(role: Message["role"]): string {
@@ -29,13 +31,38 @@ function MessageBubble({ message }: { message: Message }) {
 
 export function ChatArea() {
     const messages = useChatStore((s) => s.messages);
+    const orbState = useChatStore((s) => s.orbState);
     const bottomRef = useRef<HTMLDivElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const scrollTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const spokenIdRef = useRef<string | null>(null);
+
+    // TTS
+    const { speak } = useElevenLabsTTS();
+    const aiVoiceEnabled = useSettingsStore((s) => s.aiVoiceEnabled);
+    const ttsProvider = useSettingsStore((s) => s.ttsProvider);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
+
+    // Auto-speak completed assistant messages via ElevenLabs
+    useEffect(() => {
+        if (orbState !== "idle") return;
+        if (!aiVoiceEnabled || ttsProvider !== "elevenlabs") return;
+
+        const lastMsg = messages[messages.length - 1];
+        if (
+            lastMsg &&
+            lastMsg.role === "assistant" &&
+            lastMsg.source === "text" &&
+            lastMsg.id !== "seed-1" &&
+            lastMsg.id !== spokenIdRef.current
+        ) {
+            spokenIdRef.current = lastMsg.id;
+            void speak(lastMsg.content);
+        }
+    }, [orbState, messages, aiVoiceEnabled, ttsProvider, speak]);
 
     useEffect(() => {
         const el = scrollRef.current;

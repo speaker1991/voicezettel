@@ -293,6 +293,43 @@ export function SettingsPanel({
                                     checked={settings.aiVoiceEnabled}
                                     onToggle={settings.toggleAiVoiceEnabled}
                                 />
+                                {settings.aiVoiceEnabled && (
+                                    <div className="flex items-center justify-between py-2">
+                                        <span className="text-sm text-zinc-300">
+                                            TTS движок
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.ttsProvider ===
+                                                    "browser"
+                                                    ? "bg-violet-600 text-white"
+                                                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                    }`}
+                                                onClick={() =>
+                                                    settings.setTtsProvider(
+                                                        "browser",
+                                                    )
+                                                }
+                                            >
+                                                Браузер
+                                            </button>
+                                            <button
+                                                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.ttsProvider ===
+                                                    "elevenlabs"
+                                                    ? "bg-violet-600 text-white"
+                                                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                    }`}
+                                                onClick={() =>
+                                                    settings.setTtsProvider(
+                                                        "elevenlabs",
+                                                    )
+                                                }
+                                            >
+                                                ElevenLabs
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </section>
 
