@@ -10,6 +10,27 @@ import { logger } from "@/lib/logger";
  */
 const DEFAULT_VOICE = "ru-RU-SvetlanaNeural";
 
+// ── Module-level TTS instance cache ──────────────────────────
+// Avoids WebSocket handshake (200-400ms) on every request
+interface TtsCacheEntry {
+    tts: MsEdgeTTS;
+    lastUsed: number;
+}
+
+const ttsCache = new Map<string, TtsCacheEntry>();
+const CACHE_TTL = 30_000; // 30 seconds
+
+/** Clean up stale cached instances */
+function cleanStaleEntries(): void {
+    const now = Date.now();
+    for (const [key, entry] of ttsCache) {
+        if (now - entry.lastUsed > CACHE_TTL) {
+            try { entry.tts.close(); } catch { /* already closed */ }
+            ttsCache.delete(key);
+        }
+    }
+}
+
 export async function POST(req: NextRequest) {
     const { text, voice } = (await req.json()) as {
         text: string;
@@ -21,13 +42,31 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        const tts = new MsEdgeTTS();
-        await tts.setMetadata(
-            voice ?? DEFAULT_VOICE,
-            OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
-        );
+        const selectedVoice = voice ?? DEFAULT_VOICE;
+        const now = Date.now();
 
-        const { audioStream } = tts.toStream(text.slice(0, 5000));
+        // Clean stale entries periodically
+        cleanStaleEntries();
+
+        // Reuse cached TTS instance or create new one
+        let cached = ttsCache.get(selectedVoice);
+        if (!cached || now - cached.lastUsed > CACHE_TTL) {
+            // Close old instance if exists
+            if (cached) {
+                try { cached.tts.close(); } catch { /* already closed */ }
+            }
+            const tts = new MsEdgeTTS();
+            await tts.setMetadata(
+                selectedVoice,
+                OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
+            );
+            cached = { tts, lastUsed: now };
+            ttsCache.set(selectedVoice, cached);
+        } else {
+            cached.lastUsed = now;
+        }
+
+        const { audioStream } = cached.tts.toStream(text.slice(0, 5000));
 
         // Stream audio directly to client (no buffering = lower latency)
         const readableStream = new ReadableStream({
@@ -36,11 +75,11 @@ export async function POST(req: NextRequest) {
                     controller.enqueue(new Uint8Array(chunk));
                 });
                 audioStream.on("end", () => {
-                    tts.close();
                     controller.close();
                 });
                 audioStream.on("error", (err: Error) => {
-                    tts.close();
+                    // If cached instance broke, remove it so next request creates fresh
+                    ttsCache.delete(selectedVoice);
                     controller.error(err);
                 });
             },
@@ -54,6 +93,9 @@ export async function POST(req: NextRequest) {
             },
         });
     } catch (err) {
+        // Remove broken cached instance
+        const selectedVoice = voice ?? DEFAULT_VOICE;
+        ttsCache.delete(selectedVoice);
         logger.error("Edge TTS error:", (err as Error).message);
         return new Response("TTS error", { status: 500 });
     }

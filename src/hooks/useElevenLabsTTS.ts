@@ -5,7 +5,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 
 /**
  * Hook for Edge TTS (Microsoft neural voices).
- * Sends text to /api/tts proxy, plays the returned audio.
+ * Sends text to /api/tts proxy, streams audio via MediaSource API.
  * Supports optional onEnded callback and external audio element for mobile autoplay.
  */
 export function useEdgeTTS() {
@@ -51,35 +51,85 @@ export function useEdgeTTS() {
                 body: JSON.stringify({ text: clean, voice }),
             });
 
-            if (!res.ok) {
+            if (!res.ok || !res.body) {
                 onEnded?.();
                 return;
             }
 
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            urlRef.current = url;
+            // ── MediaSource streaming: play audio as chunks arrive ──
+            if (typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg")) {
+                const mediaSource = new MediaSource();
+                const url = URL.createObjectURL(mediaSource);
+                urlRef.current = url;
 
-            // Use external audio element if provided (avoids iOS autoplay block)
-            const audio = externalAudioEl ?? new Audio();
-            audio.src = url;
-            audioRef.current = audio;
+                const audio = externalAudioEl ?? new Audio();
+                audio.src = url;
+                audioRef.current = audio;
 
-            audio.onended = () => {
-                if (urlRef.current) {
-                    URL.revokeObjectURL(urlRef.current);
-                    urlRef.current = null;
-                }
-                if (!externalAudioEl) {
-                    audioRef.current = null;
-                }
-                onEnded?.();
-            };
+                audio.onended = () => {
+                    if (urlRef.current) {
+                        URL.revokeObjectURL(urlRef.current);
+                        urlRef.current = null;
+                    }
+                    if (!externalAudioEl) {
+                        audioRef.current = null;
+                    }
+                    onEnded?.();
+                };
 
-            await audio.play().catch(() => {
-                /* autoplay blocked — silent fail */
-                onEnded?.();
-            });
+                mediaSource.addEventListener("sourceopen", async () => {
+                    const sb = mediaSource.addSourceBuffer("audio/mpeg");
+                    const reader = res.body!.getReader();
+
+                    const pump = async (): Promise<void> => {
+                        const { done, value } = await reader.read();
+                        if (done) {
+                            if (mediaSource.readyState === "open") {
+                                mediaSource.endOfStream();
+                            }
+                            return;
+                        }
+                        // Wait for buffer to finish updating before appending
+                        if (sb.updating) {
+                            await new Promise<void>((r) =>
+                                sb.addEventListener("updateend", () => r(), { once: true }),
+                            );
+                        }
+                        sb.appendBuffer(value);
+                        sb.addEventListener("updateend", () => void pump(), { once: true });
+                    };
+
+                    void pump();
+                }, { once: true });
+
+                await audio.play().catch(() => {
+                    onEnded?.();
+                });
+            } else {
+                // ── Fallback: blob buffering (for browsers without MediaSource) ──
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                urlRef.current = url;
+
+                const audio = externalAudioEl ?? new Audio();
+                audio.src = url;
+                audioRef.current = audio;
+
+                audio.onended = () => {
+                    if (urlRef.current) {
+                        URL.revokeObjectURL(urlRef.current);
+                        urlRef.current = null;
+                    }
+                    if (!externalAudioEl) {
+                        audioRef.current = null;
+                    }
+                    onEnded?.();
+                };
+
+                await audio.play().catch(() => {
+                    onEnded?.();
+                });
+            }
         } catch {
             onEnded?.();
         }
