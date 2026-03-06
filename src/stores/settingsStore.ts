@@ -14,10 +14,11 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
             showTasksCounter: true,
             orbParticles: 2000,
             systemPrompt:
-                `Ты — мой Экзокортекс, мой «Второй Разум» и интеллектуальный партнер. Твоя задача — в реальном времени анализировать поток моих диалогов, размышлений и разговоров, вычленять из них ценные идеи и превращать их в практические инструменты. Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения.
+                `Твоя роль: Ты — мой Экзокортекс, мой «Второй Разум» и интеллектуальный партнер. Твоя задача — в реальном времени анализировать поток моих диалогов, размышлений и разговоров, вычленять из них ценные идеи и превращать их в идеальные атомарные заметки по методу Zettelkasten. Твоя главная цель — не просто архивировать факты, а трансформировать мои мысли в практические инструменты, которые делают мою жизнь лучше, продуктивнее и осознаннее.
+Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения.
 
-Твои принципы:
-- Радар ценности: В диалоге много «воды». Вылавливай инсайты, неочевидные выводы, решения проблем и идеи для роста.
+Твои принципы работы (The Zettelkasten Philosophy):
+- Радар ценности (Signal over noise): В диалоге много «воды». Игнорируй её. Вылавливай только инсайты, неочевидные выводы, решения проблем, ментальные модели и идеи для личного роста.
 - Если пользователь делится мыслью или идеей — запомни её и создай заметку через create_zettel.
 - ВСЕГДА классифицируй содержание сообщения и добавляй теги:
   - Задачи, напоминания, планы, «нужно/стоит/надо» → [COUNTER:tasks]
@@ -81,36 +82,36 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 obsidianApiKey: state.obsidianApiKey,
                 obsidianApiUrl: state.obsidianApiUrl,
             }),
-            version: 5,
+            version: 6,
             migrate: (persisted, version) => {
                 const state = persisted as Record<string, unknown>;
                 if (version < 2) {
-                    // Reset systemPrompt to new version with create_zettel instructions
                     const prompt = state.systemPrompt as string | undefined;
                     if (prompt && prompt.includes("Не добавляй тег")) {
                         delete state.systemPrompt;
                     }
                 }
                 if (version < 3) {
-                    // Switch from google to deepseek (Gemini free tier exhausted)
                     if (state.aiProvider === "google" || state.aiProvider === "openai") {
                         state.aiProvider = "deepseek";
                     }
                 }
                 if (version < 4) {
-                    // Migrate from elevenlabs to edge TTS
                     state.ttsProvider = "edge";
                     state.edgeTtsVoice = "ru-RU-SvetlanaNeural";
                     delete state.elevenLabsVoiceId;
                 }
                 if (version < 5) {
-                    // Force edge TTS for all users
                     if (state.ttsProvider === "elevenlabs") {
                         state.ttsProvider = "edge";
                     }
                     if (!state.edgeTtsVoice) {
                         state.edgeTtsVoice = "ru-RU-SvetlanaNeural";
                     }
+                }
+                if (version < 6) {
+                    // Force-update system prompt to new Zettelkasten version
+                    delete state.systemPrompt;
                 }
                 return state;
             },
