@@ -14,7 +14,7 @@ const VAULT_PATH = process.env.VAULT_PATH;
 const RequestSchema = z.object({
     userText: z.string().min(1),
     assistantText: z.string().min(1),
-    provider: z.enum(["openai", "google"]).default("openai"),
+    provider: z.enum(["openai", "google", "deepseek"]).default("deepseek"),
     hasLocalApi: z.boolean().default(false),
 });
 
@@ -89,6 +89,41 @@ function makeTimestamp(): string {
         .toISOString()
         .replace(/[-T:.Z]/g, "")
         .slice(0, 14);
+}
+
+// ── Write raw dialog to Archive folder (by date) ─────────────
+async function appendToSessionArchive(
+    userText: string,
+    assistantText: string,
+): Promise<void> {
+    if (!VAULT_PATH) return;
+
+    const now = new Date();
+    const today = now.toISOString().split("T")[0]; // YYYY-MM-DD
+    const time = now.toTimeString().slice(0, 8);    // HH:MM:SS
+
+    const archiveDir = join(VAULT_PATH, "Archive");
+    await mkdir(archiveDir, { recursive: true });
+
+    const filePath = join(archiveDir, `${today}.md`);
+
+    const entry = `\n---\n**${time}**\n\n🗣 **Пользователь:** ${userText}\n\n🤖 **Ассистент:** ${assistantText}\n`;
+
+    try {
+        // Check if file exists, add header if new
+        const { access, appendFile, writeFile: wf } = await import("fs/promises");
+        try {
+            await access(filePath);
+            // File exists — append
+            await appendFile(filePath, entry, "utf-8");
+        } catch {
+            // File doesn't exist — create with header
+            const header = `# 📅 Сессия ${today}\n\nАрхив диалогов VoiceZettel за ${today}.\n\nТеги: #archive #session\n`;
+            await wf(filePath, header + entry, "utf-8");
+        }
+    } catch {
+        // Silent fail — archive is best-effort
+    }
 }
 
 // ── Write note to vault ──────────────────────────────────────
@@ -198,6 +233,7 @@ async function processWithAI(
     assistantText: string,
     provider: "openai" | "google" | "deepseek",
 ): Promise<string> {
+    // Always use DeepSeek first if available
     const dialogContext = `Пользователь сказал: "${userText}"\n\nОтвет ассистента: "${assistantText}"`;
 
     if (provider === "google" && GOOGLE_GEMINI_API_KEY) {
@@ -284,6 +320,9 @@ export async function POST(req: NextRequest) {
     const { userText, assistantText, provider, hasLocalApi } = parsed.data;
 
     try {
+        // Save raw dialog to Archive (fire-and-forget)
+        void appendToSessionArchive(userText, assistantText);
+
         const aiResult = await processWithAI(userText, assistantText, provider);
 
         if (aiResult.trim() === "SKIP") {
