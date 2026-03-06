@@ -40,6 +40,8 @@ export function useVoiceSession() {
     const userTranscriptReceived = useRef(false);
     const lastAssistantText = useRef("");
     const edgeTtsMessageShown = useRef(false);
+    const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const stopVoiceInternal = useCallback(() => {
         if (clientRef.current) {
@@ -47,6 +49,14 @@ export function useVoiceSession() {
             clientRef.current = null;
         }
         stopEdgeTTS();
+        if (browserTtsWatchdogRef.current) {
+            clearTimeout(browserTtsWatchdogRef.current);
+            browserTtsWatchdogRef.current = null;
+        }
+        if (browserTtsKeepAliveRef.current) {
+            clearInterval(browserTtsKeepAliveRef.current);
+            browserTtsKeepAliveRef.current = null;
+        }
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
         }
@@ -149,17 +159,8 @@ export function useVoiceSession() {
                 const counterType = detectCounterType(
                     lastAssistantText.current,
                 );
-                if (counterType) {
-                    useAnimationStore
-                        .getState()
-                        .triggerAnimation(counterType);
-                    const cleaned = stripCounterTag(
-                        lastAssistantText.current,
-                    );
-                    updateLastAssistantMessage({ content: cleaned });
-                }
 
-                // Save text before clearing (Edge TTS callback needs it)
+                // Save text before clearing (TTS callback needs it)
                 const savedText = lastAssistantText.current;
                 const aiText = counterType
                     ? stripCounterTag(savedText)
@@ -178,16 +179,17 @@ export function useVoiceSession() {
                         // Show message in chat at the moment audio starts
                         if (!edgeTtsMessageShown.current && textToSpeak) {
                             edgeTtsMessageShown.current = true;
-                            const displayText = counterType
-                                ? stripCounterTag(lastAssistantText.current || textToSpeak)
-                                : textToSpeak;
                             addMessage({
                                 id: crypto.randomUUID(),
                                 role: "assistant",
-                                content: displayText,
+                                content: textToSpeak,
                                 timestamp: new Date().toISOString(),
                                 source: "voice",
                             });
+                        }
+                        // Trigger counter animation AFTER message is in chat
+                        if (counterType) {
+                            useAnimationStore.getState().triggerAnimation(counterType);
                         }
                         setOrbState("speaking");
                         void speakEdgeTTS(textToSpeak, () => {
@@ -195,23 +197,61 @@ export function useVoiceSession() {
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
                     } else {
+                        // Trigger counter animation for browser TTS (message already in chat)
+                        if (counterType) {
+                            useAnimationStore.getState().triggerAnimation(counterType);
+                            updateLastAssistantMessage({ content: textToSpeak });
+                        }
+
                         // Browser TTS via Web Speech API
                         if (textToSpeak && "speechSynthesis" in window) {
                             setOrbState("speaking");
                             window.speechSynthesis.cancel();
+
                             const utterance = new SpeechSynthesisUtterance(textToSpeak);
                             utterance.lang = "ru-RU";
                             utterance.rate = 1.0;
                             utterance.pitch = 1.0;
-                            utterance.onend = () => {
+
+                            // Watchdog: force-unmute if onend doesn't fire
+                            const watchdogMs = Math.max(5000, textToSpeak.length * 100);
+                            browserTtsWatchdogRef.current = setTimeout(() => {
+                                window.speechSynthesis.cancel();
+                                clientRef.current?.unmuteMic();
+                                setOrbState("listening");
+                                browserTtsWatchdogRef.current = null;
+                            }, watchdogMs);
+
+                            const cleanup = () => {
+                                if (browserTtsWatchdogRef.current) {
+                                    clearTimeout(browserTtsWatchdogRef.current);
+                                    browserTtsWatchdogRef.current = null;
+                                }
+                                if (browserTtsKeepAliveRef.current) {
+                                    clearInterval(browserTtsKeepAliveRef.current);
+                                    browserTtsKeepAliveRef.current = null;
+                                }
                                 clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             };
-                            utterance.onerror = () => {
-                                clientRef.current?.unmuteMic();
-                                setOrbState("listening");
-                            };
+
+                            utterance.onend = cleanup;
+                            utterance.onerror = cleanup;
+
                             window.speechSynthesis.speak(utterance);
+
+                            // Chrome bug workaround: speechSynthesis pauses after ~15s
+                            browserTtsKeepAliveRef.current = setInterval(() => {
+                                if (!window.speechSynthesis.speaking) {
+                                    if (browserTtsKeepAliveRef.current) {
+                                        clearInterval(browserTtsKeepAliveRef.current);
+                                        browserTtsKeepAliveRef.current = null;
+                                    }
+                                    return;
+                                }
+                                window.speechSynthesis.pause();
+                                window.speechSynthesis.resume();
+                            }, 10000);
                         } else {
                             clientRef.current?.unmuteMic();
                             setOrbState("listening");
