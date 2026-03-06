@@ -39,6 +39,7 @@ export function useVoiceSession() {
     const isAssistantResponding = useRef(false);
     const userTranscriptReceived = useRef(false);
     const lastAssistantText = useRef("");
+    const edgeTtsMessageShown = useRef(false);
 
     const stopVoiceInternal = useCallback(() => {
         if (clientRef.current) {
@@ -46,8 +47,12 @@ export function useVoiceSession() {
             clientRef.current = null;
         }
         stopEdgeTTS();
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+        }
         isAssistantResponding.current = false;
         userTranscriptReceived.current = false;
+        edgeTtsMessageShown.current = false;
         setIsVoiceActive(false);
         setOrbState("idle");
         setModality("text");
@@ -94,18 +99,32 @@ export function useVoiceSession() {
 
             onTranscriptAssistant: (accumulated: string) => {
                 lastAssistantText.current = accumulated;
-                if (!isAssistantResponding.current) {
-                    isAssistantResponding.current = true;
-                    addMessage({
-                        id: crypto.randomUUID(),
-                        role: "assistant",
-                        content: accumulated,
-                        timestamp: new Date().toISOString(),
-                        source: "voice",
-                    });
-                    setOrbState("speaking");
+
+                const currentTts = useSettingsStore.getState().ttsProvider;
+
+                if (currentTts === "browser") {
+                    // Browser TTS: text and sound play together — show immediately
+                    if (!isAssistantResponding.current) {
+                        isAssistantResponding.current = true;
+                        edgeTtsMessageShown.current = true;
+                        addMessage({
+                            id: crypto.randomUUID(),
+                            role: "assistant",
+                            content: accumulated,
+                            timestamp: new Date().toISOString(),
+                            source: "voice",
+                        });
+                        setOrbState("speaking");
+                    } else {
+                        updateLastAssistantMessage({ content: accumulated });
+                    }
                 } else {
-                    updateLastAssistantMessage({ content: accumulated });
+                    // Edge TTS: accumulate text, don't add to chat yet
+                    // Message will be shown in onAudioEnd when playback starts
+                    isAssistantResponding.current = true;
+                    if (edgeTtsMessageShown.current) {
+                        updateLastAssistantMessage({ content: accumulated });
+                    }
                 }
             },
 
@@ -156,15 +175,47 @@ export function useVoiceSession() {
                     const currentTtsProvider = useSettingsStore.getState().ttsProvider;
 
                     if (currentTtsProvider === "edge") {
+                        // Show message in chat at the moment audio starts
+                        if (!edgeTtsMessageShown.current && textToSpeak) {
+                            edgeTtsMessageShown.current = true;
+                            const displayText = counterType
+                                ? stripCounterTag(lastAssistantText.current || textToSpeak)
+                                : textToSpeak;
+                            addMessage({
+                                id: crypto.randomUUID(),
+                                role: "assistant",
+                                content: displayText,
+                                timestamp: new Date().toISOString(),
+                                source: "voice",
+                            });
+                        }
                         setOrbState("speaking");
                         void speakEdgeTTS(textToSpeak, () => {
                             clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
                     } else {
-                        // browser TTS or disabled: unmute mic immediately
-                        clientRef.current?.unmuteMic();
-                        setOrbState("listening");
+                        // Browser TTS via Web Speech API
+                        if (textToSpeak && "speechSynthesis" in window) {
+                            setOrbState("speaking");
+                            window.speechSynthesis.cancel();
+                            const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                            utterance.lang = "ru-RU";
+                            utterance.rate = 1.0;
+                            utterance.pitch = 1.0;
+                            utterance.onend = () => {
+                                clientRef.current?.unmuteMic();
+                                setOrbState("listening");
+                            };
+                            utterance.onerror = () => {
+                                clientRef.current?.unmuteMic();
+                                setOrbState("listening");
+                            };
+                            window.speechSynthesis.speak(utterance);
+                        } else {
+                            clientRef.current?.unmuteMic();
+                            setOrbState("listening");
+                        }
                     }
                 } else {
                     // No text to speak — unmute immediately
@@ -216,6 +267,7 @@ export function useVoiceSession() {
                 isAssistantResponding.current = false;
                 userTranscriptReceived.current = false;
                 lastAssistantText.current = "";
+                edgeTtsMessageShown.current = false;
             },
 
             onSessionError: (err: Error) => {
