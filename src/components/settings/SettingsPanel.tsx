@@ -250,11 +250,13 @@ export function SettingsPanel({
                                                 ? "bg-violet-600 text-white"
                                                 : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                 }`}
-                                            onClick={() =>
-                                                settings.setAiProvider(
-                                                    "openai",
-                                                )
-                                            }
+                                            onClick={() => {
+                                                settings.setAiProvider("openai");
+                                                useNotificationStore.getState().addNotification(
+                                                    "Провайдер: OpenAI — применится к следующему сообщению",
+                                                    "info",
+                                                );
+                                            }}
                                         >
                                             OpenAI
                                         </button>
@@ -264,11 +266,13 @@ export function SettingsPanel({
                                                 ? "bg-violet-600 text-white"
                                                 : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                 }`}
-                                            onClick={() =>
-                                                settings.setAiProvider(
-                                                    "deepseek",
-                                                )
-                                            }
+                                            onClick={() => {
+                                                settings.setAiProvider("deepseek");
+                                                useNotificationStore.getState().addNotification(
+                                                    "Провайдер: DeepSeek — применится к следующему сообщению",
+                                                    "info",
+                                                );
+                                            }}
                                         >
                                             DeepSeek
                                         </button>
@@ -278,11 +282,13 @@ export function SettingsPanel({
                                                 ? "bg-violet-600 text-white"
                                                 : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                 }`}
-                                            onClick={() =>
-                                                settings.setAiProvider(
-                                                    "google",
-                                                )
-                                            }
+                                            onClick={() => {
+                                                settings.setAiProvider("google");
+                                                useNotificationStore.getState().addNotification(
+                                                    "Провайдер: Gemini — применится к следующему сообщению",
+                                                    "info",
+                                                );
+                                            }}
                                         >
                                             Gemini
                                         </button>
@@ -305,11 +311,13 @@ export function SettingsPanel({
                                                     ? "bg-violet-600 text-white"
                                                     : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                     }`}
-                                                onClick={() =>
-                                                    settings.setTtsProvider(
-                                                        "browser",
-                                                    )
-                                                }
+                                                onClick={() => {
+                                                    settings.setTtsProvider("browser");
+                                                    useNotificationStore.getState().addNotification(
+                                                        "TTS: Браузер — применится к следующему ответу",
+                                                        "info",
+                                                    );
+                                                }}
                                             >
                                                 Браузер
                                             </button>
@@ -319,11 +327,13 @@ export function SettingsPanel({
                                                     ? "bg-violet-600 text-white"
                                                     : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                                                     }`}
-                                                onClick={() =>
-                                                    settings.setTtsProvider(
-                                                        "edge",
-                                                    )
-                                                }
+                                                onClick={() => {
+                                                    settings.setTtsProvider("edge");
+                                                    useNotificationStore.getState().addNotification(
+                                                        "TTS: Edge TTS — применится к следующему ответу",
+                                                        "info",
+                                                    );
+                                                }}
                                             >
                                                 Edge TTS
                                             </button>

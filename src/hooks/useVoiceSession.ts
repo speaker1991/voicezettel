@@ -146,20 +146,26 @@ export function useVoiceSession() {
                     ? stripCounterTag(savedText)
                     : savedText;
 
-                // ── Edge TTS: speak the response ──
-                // Mic stays MUTED during playback → unmute in onEnded
+                // ── TTS: speak the response ──
+                // Read current provider at call-time (not from closure)
                 if (savedText) {
                     const textToSpeak = counterType
                         ? stripCounterTag(savedText)
                         : savedText;
 
-                    setOrbState("speaking");
+                    const currentTtsProvider = useSettingsStore.getState().ttsProvider;
 
-                    void speakEdgeTTS(textToSpeak, () => {
-                        // Edge TTS finished → unmute mic, ready for next turn
+                    if (currentTtsProvider === "edge") {
+                        setOrbState("speaking");
+                        void speakEdgeTTS(textToSpeak, () => {
+                            clientRef.current?.unmuteMic();
+                            setOrbState("listening");
+                        }, edgeTtsAudioEl);
+                    } else {
+                        // browser TTS or disabled: unmute mic immediately
                         clientRef.current?.unmuteMic();
                         setOrbState("listening");
-                    }, edgeTtsAudioEl);
+                    }
                 } else {
                     // No text to speak — unmute immediately
                     clientRef.current?.unmuteMic();
