@@ -43,6 +43,14 @@ export function useVoiceSession() {
     const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+    // Single source of truth for resetting response cycle state
+    const resetResponseState = useCallback(() => {
+        isAssistantResponding.current = false;
+        userTranscriptReceived.current = false;
+        lastAssistantText.current = "";
+        edgeTtsMessageShown.current = false;
+    }, []);
+
     const stopVoiceInternal = useCallback(() => {
         if (clientRef.current) {
             clientRef.current.stop();
@@ -60,13 +68,11 @@ export function useVoiceSession() {
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
         }
-        isAssistantResponding.current = false;
-        userTranscriptReceived.current = false;
-        edgeTtsMessageShown.current = false;
+        resetResponseState();
         setIsVoiceActive(false);
         setOrbState("idle");
         setModality("text");
-    }, [setOrbState, setModality, stopEdgeTTS]);
+    }, [setOrbState, setModality, stopEdgeTTS, resetResponseState]);
 
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
@@ -109,32 +115,10 @@ export function useVoiceSession() {
 
             onTranscriptAssistant: (accumulated: string) => {
                 lastAssistantText.current = accumulated;
-
-                const currentTts = useSettingsStore.getState().ttsProvider;
-
-                if (currentTts === "browser") {
-                    // Browser TTS: text and sound play together — show immediately
-                    if (!isAssistantResponding.current) {
-                        isAssistantResponding.current = true;
-                        edgeTtsMessageShown.current = true;
-                        addMessage({
-                            id: crypto.randomUUID(),
-                            role: "assistant",
-                            content: accumulated,
-                            timestamp: new Date().toISOString(),
-                            source: "voice",
-                        });
-                        setOrbState("speaking");
-                    } else {
-                        updateLastAssistantMessage({ content: accumulated });
-                    }
-                } else {
-                    // Edge TTS: accumulate text, don't add to chat yet
-                    // Message will be shown in onAudioEnd when playback starts
-                    isAssistantResponding.current = true;
-                    if (edgeTtsMessageShown.current) {
-                        updateLastAssistantMessage({ content: accumulated });
-                    }
+                isAssistantResponding.current = true;
+                // Update message only if it's already been added to chat
+                if (edgeTtsMessageShown.current) {
+                    updateLastAssistantMessage({ content: accumulated });
                 }
             },
 
@@ -160,49 +144,44 @@ export function useVoiceSession() {
                     lastAssistantText.current,
                 );
 
-                // Save text before clearing (TTS callback needs it)
+                // Save text before TTS starts
                 const savedText = lastAssistantText.current;
                 const aiText = counterType
                     ? stripCounterTag(savedText)
                     : savedText;
 
                 // ── TTS: speak the response ──
-                // Read current provider at call-time (not from closure)
                 if (savedText) {
                     const textToSpeak = counterType
                         ? stripCounterTag(savedText)
                         : savedText;
 
+                    // Add message to chat (unified for both providers)
+                    if (!edgeTtsMessageShown.current && textToSpeak) {
+                        edgeTtsMessageShown.current = true;
+                        addMessage({
+                            id: crypto.randomUUID(),
+                            role: "assistant",
+                            content: textToSpeak,
+                            timestamp: new Date().toISOString(),
+                            source: "voice",
+                        });
+                    }
+                    if (counterType) {
+                        useAnimationStore.getState().triggerAnimation(counterType);
+                    }
+
+                    // Launch TTS by current provider
                     const currentTtsProvider = useSettingsStore.getState().ttsProvider;
 
                     if (currentTtsProvider === "edge") {
-                        // Show message in chat at the moment audio starts
-                        if (!edgeTtsMessageShown.current && textToSpeak) {
-                            edgeTtsMessageShown.current = true;
-                            addMessage({
-                                id: crypto.randomUUID(),
-                                role: "assistant",
-                                content: textToSpeak,
-                                timestamp: new Date().toISOString(),
-                                source: "voice",
-                            });
-                        }
-                        // Trigger counter animation AFTER message is in chat
-                        if (counterType) {
-                            useAnimationStore.getState().triggerAnimation(counterType);
-                        }
                         setOrbState("speaking");
                         void speakEdgeTTS(textToSpeak, () => {
+                            resetResponseState();
                             clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
                     } else {
-                        // Trigger counter animation for browser TTS (message already in chat)
-                        if (counterType) {
-                            useAnimationStore.getState().triggerAnimation(counterType);
-                            updateLastAssistantMessage({ content: textToSpeak });
-                        }
-
                         // Browser TTS via Web Speech API
                         if (textToSpeak && "speechSynthesis" in window) {
                             setOrbState("speaking");
@@ -217,6 +196,7 @@ export function useVoiceSession() {
                             const watchdogMs = Math.max(5000, textToSpeak.length * 100);
                             browserTtsWatchdogRef.current = setTimeout(() => {
                                 window.speechSynthesis.cancel();
+                                resetResponseState();
                                 clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                                 browserTtsWatchdogRef.current = null;
@@ -231,6 +211,7 @@ export function useVoiceSession() {
                                     clearInterval(browserTtsKeepAliveRef.current);
                                     browserTtsKeepAliveRef.current = null;
                                 }
+                                resetResponseState();
                                 clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             };
@@ -253,12 +234,14 @@ export function useVoiceSession() {
                                 window.speechSynthesis.resume();
                             }, 10000);
                         } else {
+                            resetResponseState();
                             clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }
                     }
                 } else {
-                    // No text to speak — unmute immediately
+                    // No text to speak — reset and unmute immediately
+                    resetResponseState();
                     clientRef.current?.unmuteMic();
                     setOrbState("listening");
                 }
@@ -303,11 +286,6 @@ export function useVoiceSession() {
                         }
                     })
                     .catch(() => { /* silent */ });
-
-                isAssistantResponding.current = false;
-                userTranscriptReceived.current = false;
-                lastAssistantText.current = "";
-                edgeTtsMessageShown.current = false;
             },
 
             onSessionError: (err: Error) => {
@@ -365,6 +343,14 @@ export function useVoiceSession() {
                 }
             } catch {
                 // Vault read failed silently
+            }
+
+            // Warm up speechSynthesis during active user gesture (required by Chrome)
+            if ("speechSynthesis" in window) {
+                const warmup = new SpeechSynthesisUtterance(" ");
+                warmup.volume = 0;
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(warmup);
             }
 
             await client.start(voiceContext, useEdge);
