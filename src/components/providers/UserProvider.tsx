@@ -9,6 +9,7 @@ import {
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useChatSync } from "@/hooks/useChatSync";
+import { useSettingsSync } from "@/hooks/useSettingsSync";
 
 interface UserContextValue {
     userId: string;
@@ -30,7 +31,9 @@ export function useUser() {
  * Inner component that activates chat sync after context is available.
  */
 function ChatSyncActivator({ children }: { children: ReactNode }) {
+    const { userId } = useContext(UserContext);
     useChatSync();
+    useSettingsSync(userId);
     return <>{children}</>;
 }
 
