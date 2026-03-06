@@ -13,6 +13,6 @@
   "aiVoiceEnabled": true,
   "ttsProvider": "edge",
   "edgeTtsVoice": "ru-RU-SvetlanaNeural",
-  "obsidianApiKey": "",
+  "obsidianApiKey": "e5bec1d2b9dd3a0447256127b846d827b9aaa1c486afe1bac3f44e7244317495",
   "obsidianApiUrl": "http://127.0.0.1:27123"
 }
