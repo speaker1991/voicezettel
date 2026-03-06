@@ -47,6 +47,58 @@ async function putToLocalObsidian(
     }
 }
 
+/**
+ * Append dialog entry to Archive/YYYY-MM-DD.md in user's local Obsidian.
+ * Uses PATCH (append) if available, otherwise reads + appends + PUTs.
+ */
+async function appendArchiveToLocalObsidian(
+    apiUrl: string,
+    apiKey: string,
+    userText: string,
+    assistantText: string,
+): Promise<boolean> {
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+    const time = now.toTimeString().slice(0, 8);
+
+    const path = `Archive/${today}.md`;
+    const url = `${apiUrl}/vault/${encodeURIComponent(path)}`;
+
+    const entry = `\n---\n**${time}**\n\n🗣 **Пользователь:** ${userText}\n\n🤖 **Ассистент:** ${assistantText}\n`;
+
+    try {
+        // Try to GET existing content
+        const getRes = await fetch(url, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${apiKey}` },
+        });
+
+        let fullContent: string;
+        if (getRes.ok) {
+            const existing = await getRes.text();
+            fullContent = existing + entry;
+        } else {
+            // File doesn't exist — create with header
+            const header = `# 📅 Сессия ${today}\n\nАрхив диалогов VoiceZettel за ${today}.\n\nТеги: #archive #session\n`;
+            fullContent = header + entry;
+        }
+
+        // PUT full content
+        const putRes = await fetch(url, {
+            method: "PUT",
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "text/markdown",
+            },
+            body: fullContent,
+        });
+
+        return putRes.ok;
+    } catch {
+        return false;
+    }
+}
+
 // ── Deduplication guard ──────────────────────────────────────
 const recentSends: Map<string, number> = new Map();
 const DEDUP_WINDOW_MS = 30_000; // 30 seconds
@@ -115,8 +167,17 @@ export async function sendToObsidian(
             return;
         }
 
-        // Client-side PUT to local Obsidian (for users with their own API key)
+        // Client-side PUT to local Obsidian (user must have their own API key)
         if (obsidianApiKey && data.results) {
+            // Save archive entry (fire-and-forget)
+            void appendArchiveToLocalObsidian(
+                obsidianApiUrl,
+                obsidianApiKey,
+                userText,
+                assistantText,
+            );
+
+            // Save zettelkasten notes
             let clientSaved = 0;
             for (const note of data.results) {
                 const ok = await putToLocalObsidian(
@@ -139,15 +200,8 @@ export async function sendToObsidian(
                         "info",
                     );
             }
-        } else {
-            // Server-side write (owner) — already handled
-            const saved = data.results?.filter((r) => r.success) ?? [];
-            if (saved.length > 0) {
-                logger.debug(
-                    `Zettelkasten: ${saved.length} note(s) → vault (${saved[0].method})`,
-                );
-            }
         }
+        // If no API key — notes are generated but not saved anywhere
     } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         logger.error(`Obsidian error: ${msg}`);

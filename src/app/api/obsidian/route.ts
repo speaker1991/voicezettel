@@ -320,8 +320,13 @@ export async function POST(req: NextRequest) {
     const { userText, assistantText, provider, hasLocalApi } = parsed.data;
 
     try {
-        // Save raw dialog to Archive (fire-and-forget)
-        void appendToSessionArchive(userText, assistantText);
+        // Save raw dialog to Archive ONLY if user has their own local API
+        // (server vault is owner-only, don't mix other users' data)
+        if (!hasLocalApi && VAULT_PATH) {
+            // Skip archive for users without their own Obsidian
+        } else if (hasLocalApi) {
+            // Archive handled client-side
+        }
 
         const aiResult = await processWithAI(userText, assistantText, provider);
 
@@ -356,14 +361,9 @@ export async function POST(req: NextRequest) {
 
             const title = extractTitle(content);
 
-            // Only write to server vault if user does NOT have their own local Obsidian
-            if (!hasLocalApi) {
-                const result = await writeNoteToVault(title, content);
-                results.push({ title, content, ...result });
-            } else {
-                // Return notes for client-side PUT (no server write)
-                results.push({ title, content, success: true, method: "client" });
-            }
+            // Always return notes for client-side PUT — never write to server vault
+            // Each user saves to their OWN Obsidian via their local API key
+            results.push({ title, content, success: true, method: "client" });
         }
 
         return NextResponse.json({
