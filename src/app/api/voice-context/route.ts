@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { loadVaultContext } from "@/lib/vaultContext";
 import {
     searchMemories,
     getRecentMemories,
@@ -73,15 +72,8 @@ export async function POST(req: NextRequest) {
         parts.push("--- END CHAT ---");
     }
 
-    // 4. Vault context (truncated for voice — keep shorter)
-    const vaultContext = await loadVaultContext();
-    if (vaultContext) {
-        // Take first 5000 chars for voice (less than text chat)
-        const trimmedVault = vaultContext.slice(0, 5000);
-        parts.push(
-            `\n--- OBSIDIAN NOTES ---\n${trimmedVault}\n--- END NOTES ---`,
-        );
-    }
+    // NOTE: Vault context is now loaded CLIENT-SIDE via obsidianVaultReader
+    // and appended in useVoiceSession / useTextChat
 
     return NextResponse.json({ context: parts.join("\n") });
 }

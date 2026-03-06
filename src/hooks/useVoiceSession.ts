@@ -12,6 +12,7 @@ import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
+import { buildVaultContext } from "@/lib/obsidianVaultReader";
 import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
@@ -256,6 +257,16 @@ export function useVoiceSession() {
                 }
             } catch {
                 // Context fetch failed silently — voice still works
+            }
+
+            // Append user's Obsidian vault notes (client-side read)
+            try {
+                const vaultCtx = await buildVaultContext();
+                if (vaultCtx) {
+                    voiceContext += "\n" + vaultCtx;
+                }
+            } catch {
+                // Vault read failed silently
             }
 
             await client.start(voiceContext, useEdge);
