@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useState } from "react";
+import { useRef, useCallback, useState, useEffect } from "react";
 import {
     RealtimeVoiceClient,
     type VoiceClientCallbacks,
@@ -73,6 +73,35 @@ export function useVoiceSession() {
         setOrbState("idle");
         setModality("text");
     }, [setOrbState, setModality, stopEdgeTTS, resetResponseState]);
+
+    // Hot-swap TTS provider: interrupt active TTS when provider changes mid-session
+    useEffect(() => {
+        const unsub = useSettingsStore.subscribe(
+            (s) => s.ttsProvider,
+            () => {
+                // Stop any active TTS playback
+                stopEdgeTTS();
+                if ("speechSynthesis" in window) {
+                    window.speechSynthesis.cancel();
+                }
+                if (browserTtsWatchdogRef.current) {
+                    clearTimeout(browserTtsWatchdogRef.current);
+                    browserTtsWatchdogRef.current = null;
+                }
+                if (browserTtsKeepAliveRef.current) {
+                    clearInterval(browserTtsKeepAliveRef.current);
+                    browserTtsKeepAliveRef.current = null;
+                }
+                // If voice session is active — reset state and unmute mic
+                if (clientRef.current) {
+                    resetResponseState();
+                    clientRef.current.unmuteMic();
+                    setOrbState("listening");
+                }
+            },
+        );
+        return () => unsub();
+    }, [stopEdgeTTS, resetResponseState, setOrbState]);
 
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
