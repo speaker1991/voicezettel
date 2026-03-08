@@ -262,7 +262,7 @@ ${action}
                 const safeTitle = title.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 100);
                 const fileName = `${safeTitle}`;
 
-                const writeResult = await writeNoteToVault(fileName, markdown);
+                const writeResult = await writeNoteToVault(userId, fileName, markdown);
 
                 // Also save to memory
                 await saveMemory(userId, `Zettel: ${title} — ${essence.slice(0, 100)}`, ["zettel", noteType, ...tags.map((t) => t.replace("#", ""))]);
@@ -678,7 +678,7 @@ export async function POST(req: NextRequest) {
 
     try {
         // Load vault context (cached, ~30K chars of existing notes)
-        const vaultContext = await loadVaultContext();
+        const vaultContext = await loadVaultContext(userId);
 
         // Load memory context (recent + semantic search)
         const lastUserMsg = [...messages]
@@ -695,7 +695,7 @@ export async function POST(req: NextRequest) {
         // Preload vault notes into memory store (first time only)
         const memCount = await getRecentMemories(userId, 1);
         if (memCount.length === 0) {
-            const vaultNotes = await loadVaultNotes();
+            const vaultNotes = await loadVaultNotes(userId);
             if (vaultNotes.length > 0) {
                 await preloadFromVault(userId, vaultNotes.slice(0, 50));
             }

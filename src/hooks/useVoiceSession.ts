@@ -314,7 +314,7 @@ export function useVoiceSession() {
                         .reverse()
                         .find((m) => m.role === "user");
                     if (lastUser) {
-                        sendToObsidian(lastUser.content, aiText).catch(
+                        sendToObsidian(lastUser.content, aiText, userId).catch(
                             () => { /* handled inside */ },
                         );
                     }

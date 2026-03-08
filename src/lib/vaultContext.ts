@@ -11,7 +11,22 @@ interface VaultCache {
     timestamp: number;
 }
 
-let cache: VaultCache | null = null;
+// Per-user cache
+const cacheMap = new Map<string, VaultCache>();
+
+/**
+ * Sanitize userId for safe filesystem paths.
+ */
+function sanitizeUserId(userId: string): string {
+    return userId.replace(/[<>:"/\\|?*]/g, "_").slice(0, 100);
+}
+
+/**
+ * Get user's vault directory.
+ */
+function getUserVaultDir(userId: string): string {
+    return join(VAULT_PATH, sanitizeUserId(userId));
+}
 
 /**
  * Recursively collect all .md files from a directory.
@@ -43,19 +58,22 @@ async function collectMdFiles(dir: string): Promise<string[]> {
 }
 
 /**
- * Load all .md files from the vault and build a text context
- * for the AI assistant. Cached for 60 seconds.
+ * Load all .md files from the user's vault folder and build text context.
+ * Cached per-user for 60 seconds.
  */
-export async function loadVaultContext(): Promise<string> {
+export async function loadVaultContext(userId: string): Promise<string> {
     if (!VAULT_PATH) return "";
 
+    const userDir = getUserVaultDir(userId);
+
     // Return cached if fresh
-    if (cache && Date.now() - cache.timestamp < CACHE_TTL_MS) {
-        return cache.text;
+    const cached = cacheMap.get(userId);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        return cached.text;
     }
 
     try {
-        const files = await collectMdFiles(VAULT_PATH);
+        const files = await collectMdFiles(userDir);
 
         if (files.length === 0) return "";
 
@@ -68,13 +86,12 @@ export async function loadVaultContext(): Promise<string> {
             try {
                 const content = await readFile(filePath, "utf-8");
                 const relativePath = filePath
-                    .replace(VAULT_PATH, "")
+                    .replace(userDir, "")
                     .replace(/\\/g, "/");
 
                 const chunk = `\n--- ${relativePath} ---\n${content.trim()}\n`;
 
                 if (totalChars + chunk.length > MAX_CONTEXT_CHARS) {
-                    // Add truncated version
                     const remaining = MAX_CONTEXT_CHARS - totalChars;
                     if (remaining > 100) {
                         chunks.push(chunk.slice(0, remaining) + "\n...(обрезано)");
@@ -91,38 +108,39 @@ export async function loadVaultContext(): Promise<string> {
 
         const result = chunks.join("");
 
-        cache = { text: result, timestamp: Date.now() };
+        cacheMap.set(userId, { text: result, timestamp: Date.now() });
 
         logger.debug(
-            `Vault context loaded: ${files.length} files, ${totalChars} chars`,
+            `Vault context [${userId}]: ${files.length} files, ${totalChars} chars`,
         );
 
         return result;
     } catch (err) {
         logger.error(
-            `Failed to load vault: ${err instanceof Error ? err.message : "Unknown"}`,
+            `Failed to load vault [${userId}]: ${err instanceof Error ? err.message : "Unknown"}`,
         );
         return "";
     }
 }
 
 /**
- * Load vault notes as structured {title, content} pairs.
+ * Load vault notes as structured {title, content} pairs for a specific user.
  * Used for preloading into memory store.
  */
-export async function loadVaultNotes(): Promise<
-    Array<{ title: string; content: string }>
-> {
+export async function loadVaultNotes(
+    userId: string,
+): Promise<Array<{ title: string; content: string }>> {
     if (!VAULT_PATH) return [];
 
+    const userDir = getUserVaultDir(userId);
+
     try {
-        const files = await collectMdFiles(VAULT_PATH);
+        const files = await collectMdFiles(userDir);
         const notes: Array<{ title: string; content: string }> = [];
 
         for (const filePath of files) {
             try {
                 const content = await readFile(filePath, "utf-8");
-                // Extract title from heading or filename
                 const headingMatch = /^#\s+(.+)$/m.exec(content);
                 const fileName = filePath
                     .replace(/\\/g, "/")

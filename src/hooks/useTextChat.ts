@@ -174,7 +174,7 @@ export function useTextChat() {
                 const finalText = counterTypes.length > 0
                     ? stripCounterTag(accumulated)
                     : accumulated;
-                sendToObsidian(trimmed, finalText).catch(() => {
+                sendToObsidian(trimmed, finalText, userId).catch(() => {
                     /* handled inside sendToObsidian */
                 });
             } catch (err) {

@@ -1,30 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
+import { appendToSessionArchive, writeNoteToVault } from "@/lib/vaultWriter";
+import { logger } from "@/lib/logger";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
-const OBSIDIAN_REST_URL = process.env.OBSIDIAN_REST_URL;
-const OBSIDIAN_API_KEY = process.env.OBSIDIAN_API_KEY;
-const VAULT_PATH = process.env.VAULT_PATH;
 
 // ── Request schema ───────────────────────────────────────────
 const RequestSchema = z.object({
     userText: z.string().min(1),
     assistantText: z.string().min(1),
     provider: z.enum(["openai", "google", "deepseek"]).default("deepseek"),
-    hasLocalApi: z.boolean().default(false),
+    userId: z.string().default("anonymous"),
 });
 
 const ZETTELKASTEN_SYSTEM_PROMPT = `Ты — мой Экзокортекс, мой «Второй Разум». Твоя задача — в реальном времени анализировать поток диалогов и превращать мысли в идеальные атомарные заметки по методу Zettelkasten.
 
 ПРИНЦИПЫ РАБОТЫ:
-- Радар ценности (Signal over noise): В диалоге много «воды». Игнорируй её. Вылавливай только инсайты, неочевидные выводы, решения проблем, ментальные модели и идеи для личного роста.
-- Атомарность (Atomicity): Одна идея = одна заметка. Если в монологе прозвучало три разные мысли, создай три отдельные сущности. Каждая заметка — кирпичик LEGO.
-- Автономность (Autonomy): Переписывай сырую речь так, чтобы идея была абсолютно понятна без контекста сегодняшнего диалога (пиши для будущего «я», которое всё забыло).
-- Заголовок: НЕ существительное (например, «Прокрастинация»), а полное декларативное утверждение (например, «Прокрастинация возникает из-за страха неудачи, а не лени»).
+- Атомарность (Atomicity): Одна идея = одна заметка. Если в монологе прозвучало три мысли — создай три заметки, разделённые маркером ---SPLIT---
+- Автономность (Autonomy): Каждая заметка понятна без контекста диалога.
 - Практическая польза (Productive Thinking): Каждая концепция должна перекидывать мост между теорией и ежедневными действиями.
 
 ФОРМАТ ОТВЕТА — чистый Markdown для КАЖДОЙ заметки:
@@ -38,167 +33,56 @@ source: voice-dialog
 created: "{{datetime}}"
 ---
 
-# [Декларативный заголовок-утверждение, отражающий суть идеи]
+# [Декларативный заголовок-утверждение в 3-5 словах]
 
-Дата: {{date}}
-Теги: #zettel #идея [добавь 2-3 тега по широким темам, например: #психология, #продуктивность, #отношения]
-
----
 ### 💡 Суть идеи (Своими словами)
-[Переформулируй мысль из диалога максимально ясно, емко и глубоко. Без воды. 3-5 предложений. Это должно быть кристаллизованное знание, очищенное от эмоций момента.]
+[Переформулируй мысль максимально ясно и глубоко. 3-5 предложений.]
 
 ### 🛠 Как это улучшит мою жизнь (Практическое применение)
-[Выведи из идеи конкретное действие, правило или ментальную установку. Как я могу применить это в своей работе, отношениях или саморазвитии уже завтра? Что мне нужно изменить в своем поведении исходя из этой идеи?]
+[Конкретное действие, правило или ментальная установка.]
 
 ### 🧭 Компас Идей (Связи)
 - Север (К какому большему паттерну/теме это относится?): [[...]]
-- Юг (Из каких базовых деталей или первопричин это состоит?): [[...]]
-- Восток (Чему это противоречит? Какие есть контраргументы?): [[...]]
-- Запад (На что это похоже? Какие есть неочевидные аналогии в других сферах?): [[...]]
+- Юг (Из какого корня/причины это растёт?): [[...]]
+- Восток (Какой контраргумент или противоречие?): [[...]]
+- Запад (Какая аналогия из совершенно другой области?): [[...]]
 
-### 🎙 Контекст диалога (Fleeting Note)
-> *Краткая цитата или описание того, в каком контексте эта мысль всплыла в разговоре, чтобы сохранить нить рассуждений.*
+### 🎙 Контекст диалога
+> [Кратко, в каком разговоре и при каких обстоятельствах эта мысль появилась]
 
----
-
-Если в тексте несколько идей — выдай несколько заметок, разделённых строкой "---SPLIT---".
-Замени {{timestamp}} на текущий timestamp (YYYYMMDDHHmmss), {{title}} на заголовок, {{datetime}} на ISO дату, {{date}} на дату YYYY-MM-DD.
+Если несколько заметок — раздели их маркером ---SPLIT---
 Отвечай ТОЛЬКО Markdown-кодом заметок, без пояснений.
+
 Если в тексте нет абсолютно никакой полезной информации (например, просто «привет», «как дела?», «спасибо») — ответь словом "SKIP".
 Практические задачи, планы, бытовые идеи и any to-do — это НЕ повод для SKIP, это тоже ценные заметки.`;
 
 // ── Extract title from markdown ──────────────────────────────
 function extractTitle(markdown: string): string {
-    // Try frontmatter title first
-    const fmMatch = /^title:\s*"?(.+?)"?\s*$/m.exec(markdown);
-    if (fmMatch) {
-        return fmMatch[1].replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 100);
+    const headingMatch = /^#\s+(.+)$/m.exec(markdown);
+    if (headingMatch) {
+        return headingMatch[1]
+            .replace(/[\\/:*?"<>|]/g, "")
+            .trim()
+            .slice(0, 100);
     }
-    // Try heading
-    const hMatch = /^#\s+(.+)$/m.exec(markdown);
-    if (hMatch) {
-        return hMatch[1].replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 100);
+
+    const titleMatch = /title:\s*"?(.+?)"?\s*$/m.exec(markdown);
+    if (titleMatch) {
+        return titleMatch[1]
+            .replace(/[\\/:*?"<>|]/g, "")
+            .trim()
+            .slice(0, 100);
     }
-    return `Zettel-${Date.now()}`;
+
+    return `zettel-${Date.now()}`;
 }
 
 // ── Generate timestamp ID ────────────────────────────────────
 function makeTimestamp(): string {
-    const now = new Date();
-    return now
+    return new Date()
         .toISOString()
         .replace(/[-T:.Z]/g, "")
         .slice(0, 14);
-}
-
-// ── Write raw dialog to Archive folder (by date) ─────────────
-async function appendToSessionArchive(
-    userText: string,
-    assistantText: string,
-): Promise<void> {
-    if (!VAULT_PATH) return;
-
-    const now = new Date();
-    const today = now.toISOString().split("T")[0]; // YYYY-MM-DD
-    const time = now.toTimeString().slice(0, 8);    // HH:MM:SS
-
-    const archiveDir = join(VAULT_PATH, "Archive");
-    await mkdir(archiveDir, { recursive: true });
-
-    const filePath = join(archiveDir, `${today}.md`);
-
-    const entry = `\n---\n**${time}**\n\n🗣 **Пользователь:** ${userText}\n\n🤖 **Ассистент:** ${assistantText}\n`;
-
-    try {
-        // Check if file exists, add header if new
-        const { access, appendFile, writeFile: wf } = await import("fs/promises");
-        try {
-            await access(filePath);
-            // File exists — append
-            await appendFile(filePath, entry, "utf-8");
-        } catch {
-            // File doesn't exist — create with header
-            const header = `# 📅 Сессия ${today}\n\nАрхив диалогов VoiceZettel за ${today}.\n\nТеги: #archive #session\n`;
-            await wf(filePath, header + entry, "utf-8");
-        }
-    } catch {
-        // Silent fail — archive is best-effort
-    }
-}
-
-// ── Write note to vault ──────────────────────────────────────
-async function writeNoteToVault(
-    title: string,
-    content: string,
-): Promise<{ success: boolean; error?: string; method: string }> {
-    const filename = `${title}.md`;
-
-    // Method 1: Direct filesystem write (fastest, most reliable)
-    if (VAULT_PATH) {
-        try {
-            const zettelDir = join(VAULT_PATH, "Zettelkasten");
-            await mkdir(zettelDir, { recursive: true });
-            const filePath = join(zettelDir, filename);
-            await writeFile(filePath, content, "utf-8");
-            return { success: true, method: "filesystem" };
-        } catch (err) {
-            // Fall through to REST API
-            const fsErr = err instanceof Error ? err.message : "Unknown";
-            // Try REST API as fallback
-            if (OBSIDIAN_REST_URL && OBSIDIAN_API_KEY) {
-                const restResult = await writeViaRestApi(filename, content);
-                if (restResult.success) return restResult;
-            }
-            return { success: false, error: fsErr, method: "filesystem" };
-        }
-    }
-
-    // Method 2: REST API
-    if (OBSIDIAN_REST_URL && OBSIDIAN_API_KEY) {
-        return writeViaRestApi(filename, content);
-    }
-
-    return {
-        success: false,
-        error: "No VAULT_PATH or OBSIDIAN_REST_URL configured",
-        method: "none",
-    };
-}
-
-async function writeViaRestApi(
-    filename: string,
-    content: string,
-): Promise<{ success: boolean; error?: string; method: string }> {
-    const path = `Zettelkasten/${filename}`;
-    const url = `${OBSIDIAN_REST_URL}/vault/${encodeURIComponent(path)}`;
-
-    try {
-        const res = await fetch(url, {
-            method: "PUT",
-            headers: {
-                Authorization: `Bearer ${OBSIDIAN_API_KEY}`,
-                "Content-Type": "text/markdown",
-            },
-            body: content,
-        });
-
-        if (!res.ok) {
-            const errText = await res.text();
-            return {
-                success: false,
-                error: `REST API ${res.status}: ${errText}`,
-                method: "rest-api",
-            };
-        }
-
-        return { success: true, method: "rest-api" };
-    } catch (err) {
-        return {
-            success: false,
-            error: err instanceof Error ? err.message : "Network error",
-            method: "rest-api",
-        };
-    }
 }
 
 // ── DeepSeek helper (OpenAI-compatible) ──────────────────────
@@ -216,10 +100,14 @@ async function processWithDeepSeek(dialogContext: string): Promise<string> {
                 { role: "user", content: dialogContext },
             ],
             temperature: 0.7,
+            max_tokens: 2000,
         }),
     });
 
-    if (!res.ok) throw new Error(`DeepSeek error ${res.status}`);
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`DeepSeek error ${res.status}: ${errText}`);
+    }
 
     const data = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
@@ -233,76 +121,91 @@ async function processWithAI(
     assistantText: string,
     provider: "openai" | "google" | "deepseek",
 ): Promise<string> {
-    // Always use DeepSeek first if available
-    const dialogContext = `Пользователь сказал: "${userText}"\n\nОтвет ассистента: "${assistantText}"`;
+    const dialogContext = `Пользователь сказал:\n"${userText}"\n\nАссистент ответил:\n"${assistantText}"`;
 
     if (provider === "google" && GOOGLE_GEMINI_API_KEY) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_GEMINI_API_KEY}`;
-        const res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [
-                    { role: "user", parts: [{ text: dialogContext }] },
-                ],
-                systemInstruction: {
-                    parts: [{ text: ZETTELKASTEN_SYSTEM_PROMPT }],
+        try {
+            const res = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_GEMINI_API_KEY}`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        system_instruction: {
+                            parts: [{ text: ZETTELKASTEN_SYSTEM_PROMPT }],
+                        },
+                        contents: [
+                            {
+                                role: "user",
+                                parts: [{ text: dialogContext }],
+                            },
+                        ],
+                        generationConfig: {
+                            temperature: 0.7,
+                            maxOutputTokens: 2000,
+                        },
+                    }),
                 },
-                generationConfig: { temperature: 0.7 },
-            }),
-        });
+            );
 
-        if (!res.ok) {
-            // Fallback to DeepSeek if Gemini fails
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Gemini ${res.status}: ${errText}`);
+            }
+
+            const data = (await res.json()) as {
+                candidates?: Array<{
+                    content?: { parts?: Array<{ text?: string }> };
+                }>;
+            };
+            return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "SKIP";
+        } catch (geminiErr) {
             if (DEEPSEEK_API_KEY) {
                 return processWithDeepSeek(dialogContext);
             }
-            throw new Error(`Gemini error ${res.status}`);
+            throw geminiErr;
         }
-
-        const data = (await res.json()) as {
-            candidates?: Array<{
-                content?: { parts?: Array<{ text?: string }> };
-            }>;
-        };
-        return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "SKIP";
     }
 
-    // DeepSeek path
     if (provider === "deepseek" && DEEPSEEK_API_KEY) {
         return processWithDeepSeek(dialogContext);
     }
 
-    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
+    if (provider === "openai" && OPENAI_API_KEY) {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${OPENAI_API_KEY}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                model: "gpt-4o-mini",
+                messages: [
+                    { role: "system", content: ZETTELKASTEN_SYSTEM_PROMPT },
+                    { role: "user", content: dialogContext },
+                ],
+                temperature: 0.7,
+                max_tokens: 2000,
+            }),
+        });
 
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-                { role: "system", content: ZETTELKASTEN_SYSTEM_PROMPT },
-                { role: "user", content: dialogContext },
-            ],
-            temperature: 0.7,
-        }),
-    });
-
-    if (!res.ok) {
-        // Fallback to DeepSeek if OpenAI fails
-        if (DEEPSEEK_API_KEY) {
-            return processWithDeepSeek(dialogContext);
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`OpenAI error ${res.status}: ${errText}`);
         }
-        throw new Error(`OpenAI error ${res.status}`);
+
+        const data = (await res.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+        };
+        return data.choices?.[0]?.message?.content ?? "SKIP";
     }
 
-    const data = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content ?? "SKIP";
+    // Fallback
+    if (DEEPSEEK_API_KEY) {
+        return processWithDeepSeek(dialogContext);
+    }
+
+    throw new Error("No API key (DeepSeek/OpenAI/Google) available.");
 }
 
 // ── Route handler ────────────────────────────────────────────
@@ -317,16 +220,11 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const { userText, assistantText, provider, hasLocalApi } = parsed.data;
+    const { userText, assistantText, provider, userId } = parsed.data;
 
     try {
-        // Save raw dialog to Archive ONLY if user has their own local API
-        // (server vault is owner-only, don't mix other users' data)
-        if (!hasLocalApi && VAULT_PATH) {
-            // Skip archive for users without their own Obsidian
-        } else if (hasLocalApi) {
-            // Archive handled client-side
-        }
+        // Save raw dialog to user's Archive folder (fire-and-forget)
+        void appendToSessionArchive(userId, userText, assistantText);
 
         const aiResult = await processWithAI(userText, assistantText, provider);
 
@@ -361,10 +259,18 @@ export async function POST(req: NextRequest) {
 
             const title = extractTitle(content);
 
-            // Always return notes for client-side PUT — never write to server vault
-            // Each user saves to their OWN Obsidian via their local API key
-            results.push({ title, content, success: true, method: "client" });
+            // Write note to user's Zettelkasten folder
+            const writeResult = await writeNoteToVault(userId, title, content);
+            results.push({
+                title,
+                content,
+                success: writeResult.success,
+                error: writeResult.error,
+                method: writeResult.method,
+            });
         }
+
+        logger.info(`Obsidian [${userId}]: ${results.length} notes processed`);
 
         return NextResponse.json({
             skipped: false,
