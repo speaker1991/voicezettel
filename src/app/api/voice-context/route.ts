@@ -72,8 +72,8 @@ export async function POST(req: NextRequest) {
         parts.push("--- END CHAT ---");
     }
 
-    // NOTE: Vault context is now loaded CLIENT-SIDE via obsidianVaultReader
-    // and appended in useVoiceSession / useTextChat
+    // NOTE: Vault context is now loaded SERVER-SIDE via /api/vault-context
+    // and appended in useVoiceSession (per-user isolation)
 
     return NextResponse.json({ context: parts.join("\n") });
 }

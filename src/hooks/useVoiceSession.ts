@@ -12,7 +12,6 @@ import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
-import { buildVaultContext } from "@/lib/obsidianVaultReader";
 import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
@@ -396,11 +395,18 @@ export function useVoiceSession() {
                 // Context fetch failed silently — voice still works
             }
 
-            // Append user's Obsidian vault notes (client-side read)
+            // Append user's Obsidian vault notes (server-side, per-user)
             try {
-                const vaultCtx = await buildVaultContext();
-                if (vaultCtx) {
-                    voiceContext += "\n" + vaultCtx;
+                const vaultRes = await fetch("/api/vault-context", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userId }),
+                });
+                if (vaultRes.ok) {
+                    const vaultData = (await vaultRes.json()) as { context?: string };
+                    if (vaultData.context) {
+                        voiceContext += "\n--- OBSIDIAN NOTES ---\n" + vaultData.context + "\n--- END NOTES ---";
+                    }
                 }
             } catch {
                 // Vault read failed silently
