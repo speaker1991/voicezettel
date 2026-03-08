@@ -337,6 +337,22 @@ export function SettingsPanel({
                                             >
                                                 Edge TTS
                                             </button>
+                                            <button
+                                                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.ttsProvider ===
+                                                    "yandex"
+                                                    ? "bg-violet-600 text-white"
+                                                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                    }`}
+                                                onClick={() => {
+                                                    settings.setTtsProvider("yandex");
+                                                    useNotificationStore.getState().addNotification(
+                                                        "TTS: Yandex SpeechKit — применится к следующему ответу",
+                                                        "info",
+                                                    );
+                                                }}
+                                            >
+                                                Yandex
+                                            </button>
                                         </div>
                                     </div>
                                 )}

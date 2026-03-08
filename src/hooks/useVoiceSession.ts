@@ -210,6 +210,38 @@ export function useVoiceSession() {
                             clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
+                    } else if (currentTtsProvider === "yandex") {
+                        // Yandex SpeechKit: fetch from /api/tts-yandex, play via blob
+                        setOrbState("speaking");
+                        void (async () => {
+                            try {
+                                const res = await fetch("/api/tts-yandex", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ text: textToSpeak }),
+                                });
+                                if (!res.ok) throw new Error(`Yandex TTS: ${res.status}`);
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const audio = edgeTtsAudioEl ?? new Audio();
+                                audio.src = url;
+                                audio.onended = () => {
+                                    URL.revokeObjectURL(url);
+                                    resetResponseState();
+                                    clientRef.current?.unmuteMic();
+                                    setOrbState("listening");
+                                };
+                                await audio.play().catch(() => {
+                                    resetResponseState();
+                                    clientRef.current?.unmuteMic();
+                                    setOrbState("listening");
+                                });
+                            } catch {
+                                resetResponseState();
+                                clientRef.current?.unmuteMic();
+                                setOrbState("listening");
+                            }
+                        })();
                     } else {
                         // Browser TTS via Web Speech API
                         if (textToSpeak && "speechSynthesis" in window) {

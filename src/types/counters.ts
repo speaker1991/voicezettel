@@ -26,7 +26,7 @@ export interface CountersActions {
 
 // ── Settings store types ────────────────────────────────────
 export type AiProvider = "openai" | "google" | "deepseek";
-export type TtsProvider = "browser" | "edge";
+export type TtsProvider = "browser" | "edge" | "yandex";
 
 export interface SettingsState {
     showUsdTokens: boolean;
