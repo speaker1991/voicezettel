@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 
 /**
  * Yandex SpeechKit v1 TTS API proxy.
- * Synthesizes text to speech via Yandex Cloud.
+ * Uses OAuth → IAM token exchange for authentication.
  *
  * Voices: https://yandex.cloud/en/docs/speechkit/tts/voices
  * - marina (female, default, high quality)
@@ -15,6 +15,39 @@ const DEFAULT_VOICE = "marina";
 const DEFAULT_EMOTION = "neutral";
 
 const YANDEX_TTS_URL = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize";
+const YANDEX_IAM_URL = "https://iam.api.cloud.yandex.net/iam/v1/tokens";
+
+// Cache IAM token (valid for 12 hours, we refresh every 11)
+let cachedIamToken: string | null = null;
+let iamTokenExpiry = 0;
+const IAM_TOKEN_TTL_MS = 11 * 60 * 60 * 1000; // 11 hours
+
+async function getIamToken(): Promise<string> {
+    if (cachedIamToken && Date.now() < iamTokenExpiry) {
+        return cachedIamToken;
+    }
+
+    const oauthToken = process.env.YANDEX_OAUTH_TOKEN;
+    if (!oauthToken) {
+        throw new Error("YANDEX_OAUTH_TOKEN not configured");
+    }
+
+    const res = await fetch(YANDEX_IAM_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ yandexPassportOauthToken: oauthToken }),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`IAM token error: ${res.status} ${text}`);
+    }
+
+    const data = (await res.json()) as { iamToken: string };
+    cachedIamToken = data.iamToken;
+    iamTokenExpiry = Date.now() + IAM_TOKEN_TTL_MS;
+    return cachedIamToken;
+}
 
 export async function POST(req: NextRequest) {
     const { text, voice } = (await req.json()) as {
@@ -26,15 +59,14 @@ export async function POST(req: NextRequest) {
         return new Response("Empty text", { status: 400 });
     }
 
-    const apiKey = process.env.YANDEX_SPEECHKIT_API_KEY;
     const folderId = process.env.YANDEX_SPEECHKIT_FOLDER_ID;
-
-    if (!apiKey || !folderId) {
-        logger.error("Yandex SpeechKit: missing API key or folder ID");
+    if (!folderId) {
+        logger.error("Yandex SpeechKit: missing folder ID");
         return new Response("Yandex SpeechKit not configured", { status: 500 });
     }
 
     try {
+        const iamToken = await getIamToken();
         const selectedVoice = voice ?? DEFAULT_VOICE;
 
         // Yandex SpeechKit v1 uses form-urlencoded body
@@ -51,7 +83,7 @@ export async function POST(req: NextRequest) {
         const res = await fetch(YANDEX_TTS_URL, {
             method: "POST",
             headers: {
-                "Authorization": `Api-Key ${apiKey}`,
+                "Authorization": `Bearer ${iamToken}`,
                 "Content-Type": "application/x-www-form-urlencoded",
             },
             body: params.toString(),
@@ -60,10 +92,15 @@ export async function POST(req: NextRequest) {
         if (!res.ok) {
             const errorText = await res.text();
             logger.error("Yandex SpeechKit error:", res.status, errorText);
+            // Clear cached token on auth error
+            if (res.status === 401) {
+                cachedIamToken = null;
+                iamTokenExpiry = 0;
+            }
             return new Response(`Yandex TTS error: ${res.status}`, { status: 502 });
         }
 
-        // Stream audio directly to client
+        // Return audio directly to client
         const audioData = await res.arrayBuffer();
 
         return new Response(audioData, {
