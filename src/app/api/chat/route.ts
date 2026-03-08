@@ -417,6 +417,79 @@ async function streamDeepSeek(
     return res.body;
 }
 
+// ── DeepSeek with function calling (non-streaming first pass) ──
+async function callDeepSeekWithTools(
+    userId: string,
+    messages: Array<{ role: string; content: string }>,
+    systemPrompt: string,
+): Promise<{
+    finalMessages: Array<Record<string, unknown>>;
+    needsStream: boolean;
+}> {
+    const apiMessages: Array<Record<string, unknown>> = [
+        { role: "system", content: systemPrompt },
+        ...messages,
+    ];
+
+    // First call: check if AI wants to call tools
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: apiMessages,
+            tools: MEMORY_TOOLS,
+            tool_choice: "auto",
+        }),
+    });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`DeepSeek error ${res.status}: ${errText}`);
+    }
+
+    const data = (await res.json()) as {
+        choices?: Array<{
+            message?: {
+                role?: string;
+                content?: string | null;
+                tool_calls?: ToolCall[];
+            };
+            finish_reason?: string;
+        }>;
+    };
+
+    const choice = data.choices?.[0];
+    const assistantMessage = choice?.message;
+
+    if (
+        (choice?.finish_reason === "tool_calls" || assistantMessage?.tool_calls?.length) &&
+        assistantMessage?.tool_calls
+    ) {
+        // Execute tool calls
+        const toolResults = await handleToolCalls(userId, assistantMessage.tool_calls);
+
+        // Add assistant message with tool calls + tool results
+        apiMessages.push({
+            role: "assistant",
+            content: assistantMessage.content ?? null,
+            tool_calls: assistantMessage.tool_calls,
+        });
+
+        for (const result of toolResults) {
+            apiMessages.push(result);
+        }
+
+        return { finalMessages: apiMessages, needsStream: true };
+    }
+
+    // No tool calls — re-stream
+    return { finalMessages: apiMessages, needsStream: true };
+}
+
 // ── Google Gemini streaming ──────────────────────────────────
 async function streamGemini(
     messages: Array<{ role: string; content: string }>,
@@ -729,11 +802,13 @@ export async function POST(req: NextRequest) {
         }
 
         if (provider === "deepseek") {
-            const simpleMessages = [
-                { role: "system", content: enrichedPrompt },
-                ...messages.map((m) => ({ role: m.role, content: m.content })),
-            ];
-            const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
+            // Two-pass: first check for tool calls (save_memory, create_zettel), then stream
+            const { finalMessages } = await callDeepSeekWithTools(
+                userId,
+                messages,
+                enrichedPrompt,
+            );
+            const baseStream = await streamDeepSeek(finalMessages as Array<Record<string, unknown>>);
             const taggedStream = appendCounterTags(baseStream, classifyPromise);
             return new Response(taggedStream, {
                 headers: {
