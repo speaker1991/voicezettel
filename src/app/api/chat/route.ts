@@ -22,7 +22,7 @@ const MEMORY_TOOLS = [
         function: {
             name: "save_memory",
             description:
-                "Сохранить важную информацию о пользователе в долговременную память. Используй когда пользователь делится личными предпочтениями, фактами о себе, своими целями, привычками, важными событиями или просит запомнить что-то.",
+                "ОБЯЗАТЕЛЬНО вызывай эту функцию когда пользователь делится ЛЮБОЙ личной информацией: имена, клички питомцев, даты рождения, предпочтения, привычки, цели, события, здоровье, отношения, работа, хобби. Сохраняй ВСЮ информацию без исключений.",
             parameters: {
                 type: "object",
                 properties: {
@@ -464,6 +464,8 @@ async function callDeepSeekWithTools(
 
     const choice = data.choices?.[0];
     const assistantMessage = choice?.message;
+
+    logger.info(`DeepSeek tools: finish_reason=${choice?.finish_reason}, tool_calls=${assistantMessage?.tool_calls?.length ?? 0}, content=${(assistantMessage?.content ?? "").slice(0, 100)}`);
 
     if (
         (choice?.finish_reason === "tool_calls" || assistantMessage?.tool_calls?.length) &&
