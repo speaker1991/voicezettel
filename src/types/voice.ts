@@ -41,6 +41,9 @@ export type RealtimeClientEvent =
         type: "input_audio_buffer.clear";
     }
     | {
+        type: "response.cancel";
+    }
+    | {
         type: "session.update";
         session: {
             modalities?: string[];

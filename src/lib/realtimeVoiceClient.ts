@@ -195,6 +195,15 @@ export class RealtimeVoiceClient {
         }
     }
 
+    /** Cancel the current in-progress response (barge-in support) */
+    cancelCurrentResponse(): void {
+        if (!this.dc || this.dc.readyState !== "open") return;
+        const cancelEvent: RealtimeClientEvent = {
+            type: "response.cancel",
+        };
+        this.dc.send(JSON.stringify(cancelEvent));
+    }
+
 
     sendText(text: string): void {
         if (!this.dc || this.dc.readyState !== "open") {

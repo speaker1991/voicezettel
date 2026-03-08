@@ -36,6 +36,7 @@ export function useVoiceSession() {
 
     // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
+    const isServerResponseActive = useRef(false); // true while OpenAI is streaming text, false after response.text.done
     const userTranscriptReceived = useRef(false);
     const lastAssistantText = useRef("");
     const edgeTtsMessageShown = useRef(false);
@@ -45,6 +46,7 @@ export function useVoiceSession() {
     // Single source of truth for resetting response cycle state
     const resetResponseState = useCallback(() => {
         isAssistantResponding.current = false;
+        isServerResponseActive.current = false;
         userTranscriptReceived.current = false;
         lastAssistantText.current = "";
         edgeTtsMessageShown.current = false;
@@ -91,10 +93,9 @@ export function useVoiceSession() {
                     clearInterval(browserTtsKeepAliveRef.current);
                     browserTtsKeepAliveRef.current = null;
                 }
-                // If voice session is active — reset state and unmute mic
+                // If voice session is active — reset state
                 if (clientRef.current) {
                     resetResponseState();
-                    clientRef.current.unmuteMic();
                     setOrbState("listening");
                 }
             },
@@ -151,22 +152,46 @@ export function useVoiceSession() {
             },
 
             onAudioStart: () => {
-                // Double-mute in case speech_stopped didn't fire
-                clientRef.current?.muteMic();
+                isServerResponseActive.current = true;
                 setOrbState("speaking");
             },
 
             onUserSpeechStarted: () => {
                 setOrbState("listening");
+
+                // Barge-in: if the assistant is currently speaking — stop it
+                if (isAssistantResponding.current) {
+                    // 1. Stop all TTS providers
+                    stopEdgeTTS();
+                    if ("speechSynthesis" in window) {
+                        window.speechSynthesis.cancel();
+                    }
+                    if (browserTtsWatchdogRef.current) {
+                        clearTimeout(browserTtsWatchdogRef.current);
+                        browserTtsWatchdogRef.current = null;
+                    }
+                    if (browserTtsKeepAliveRef.current) {
+                        clearInterval(browserTtsKeepAliveRef.current);
+                        browserTtsKeepAliveRef.current = null;
+                    }
+                    // 2. Cancel the current response on OpenAI Realtime API
+                    //    (only if server is still streaming — avoid errors on completed responses)
+                    if (isServerResponseActive.current) {
+                        clientRef.current?.cancelCurrentResponse();
+                    }
+                    // 3. Reset response cycle state
+                    resetResponseState();
+                }
             },
 
             onUserSpeechStopped: () => {
-                // Mute mic immediately — AI will respond soon
-                clientRef.current?.muteMic();
                 setOrbState("thinking");
             },
 
             onAudioEnd: () => {
+                // Server finished generating text — TTS playback is local from here
+                isServerResponseActive.current = false;
+
                 // Detect counter type from AI response
                 const counterType = detectCounterType(
                     lastAssistantText.current,
@@ -206,7 +231,6 @@ export function useVoiceSession() {
                         setOrbState("speaking");
                         void speakEdgeTTS(textToSpeak, () => {
                             resetResponseState();
-                            clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
                     } else if (currentTtsProvider === "yandex") {
@@ -227,17 +251,14 @@ export function useVoiceSession() {
                                 audio.onended = () => {
                                     URL.revokeObjectURL(url);
                                     resetResponseState();
-                                    clientRef.current?.unmuteMic();
                                     setOrbState("listening");
                                 };
                                 await audio.play().catch(() => {
                                     resetResponseState();
-                                    clientRef.current?.unmuteMic();
                                     setOrbState("listening");
                                 });
                             } catch {
                                 resetResponseState();
-                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             }
                         })();
@@ -257,7 +278,6 @@ export function useVoiceSession() {
                             browserTtsWatchdogRef.current = setTimeout(() => {
                                 window.speechSynthesis.cancel();
                                 resetResponseState();
-                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                                 browserTtsWatchdogRef.current = null;
                             }, watchdogMs);
@@ -272,7 +292,6 @@ export function useVoiceSession() {
                                     browserTtsKeepAliveRef.current = null;
                                 }
                                 resetResponseState();
-                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             };
 
@@ -295,14 +314,12 @@ export function useVoiceSession() {
                             }, 10000);
                         } else {
                             resetResponseState();
-                            clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }
                     }
                 } else {
-                    // No text to speak — reset and unmute immediately
+                    // No text to speak — reset immediately
                     resetResponseState();
-                    clientRef.current?.unmuteMic();
                     setOrbState("listening");
                 }
 
