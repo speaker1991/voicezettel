@@ -11,6 +11,7 @@ const ArchiveSchema = z.object({
             timestamp: z.string(),
         }),
     ),
+    userId: z.string().default("anonymous"),
 });
 
 export async function POST(req: NextRequest) {
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const { messages } = parsed.data;
+    const { messages, userId } = parsed.data;
 
     if (messages.length === 0) {
         return NextResponse.json(
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
     const markdown = lines.join("\n");
     const fileName = `${now.toISOString().slice(0, 10)}_${now.toISOString().slice(11, 19).replace(/:/g, "-")}`;
 
-    const result = await writeNoteToVault(fileName, markdown, "Archive");
+    const result = await writeNoteToVault(userId, fileName, markdown, "Archive");
 
     if (result.success) {
         logger.debug(

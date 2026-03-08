@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useChatStore } from "@/stores/chatStore";
+import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
 
 interface ArchiveResponse {
@@ -14,6 +15,7 @@ interface ArchiveResponse {
 
 export function ArchiveButton() {
     const messages = useChatStore((s) => s.messages);
+    const { userId } = useUser();
     const [saving, setSaving] = useState(false);
     const [result, setResult] = useState<string | null>(null);
 
@@ -33,6 +35,7 @@ export function ArchiveButton() {
                         content: m.content,
                         timestamp: m.timestamp,
                     })),
+                    userId,
                 }),
             });
 

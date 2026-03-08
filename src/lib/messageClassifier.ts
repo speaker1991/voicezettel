@@ -135,6 +135,7 @@ ${item.essence}
             // Save to Obsidian vault
             const fileName = `${dateStr} ${item.title.slice(0, 60).replace(/[/\\:*?"<>|]/g, "")}`;
             writeNoteToVault(
+                userId,
                 fileName,
                 noteContent,
                 "Zettelkasten",
