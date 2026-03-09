@@ -29,9 +29,27 @@ function MessageBubble({ message }: { message: Message }) {
     );
 }
 
+function LiveTranscriptBubble() {
+    const liveTranscript = useChatStore((s) => s.liveTranscript);
+    const orbState = useChatStore((s) => s.orbState);
+
+    if (orbState !== "listening" && orbState !== "thinking") return null;
+
+    return (
+        <div className="ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-[#7F22FE]/40 px-4 py-2.5 text-sm text-white/70 backdrop-blur-sm">
+            <p className="whitespace-pre-wrap break-words">
+                {liveTranscript || (
+                    <span className="animate-pulse text-white/40">🎙 Слушаю…</span>
+                )}
+            </p>
+        </div>
+    );
+}
+
 export function ChatArea() {
     const messages = useChatStore((s) => s.messages);
     const orbState = useChatStore((s) => s.orbState);
+    const liveTranscript = useChatStore((s) => s.liveTranscript);
     const bottomRef = useRef<HTMLDivElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const scrollTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -44,7 +62,7 @@ export function ChatArea() {
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages]);
+    }, [messages, liveTranscript]);
 
     // Auto-speak completed assistant messages via ElevenLabs
     useEffect(() => {
@@ -104,6 +122,7 @@ export function ChatArea() {
                 {messages.map((msg) => (
                     <MessageBubble key={msg.id} message={msg} />
                 ))}
+                <LiveTranscriptBubble />
                 <div ref={bottomRef} />
             </div>
         </div>

@@ -20,5 +20,172 @@
     "context": {
       "ttsProvider": "yandex"
     }
+  },
+  {
+    "id": "56af1eba-dd87-44ce-9d92-e22337cffc78",
+    "timestamp": "2026-03-09T22:38:07.257Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "be2e5bb2-8e7d-4ae1-b22c-1a224bb2721e",
+    "timestamp": "2026-03-09T22:52:33.626Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "d23ce574-9ac4-4cdf-8117-31474961fa0b",
+    "timestamp": "2026-03-09T22:52:58.001Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "82ebbc86-4976-47e1-93c7-36540c7f9cf3",
+    "timestamp": "2026-03-09T22:56:58.226Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "ec9c1956-cf68-4d7b-8a2f-5c3e70e6ffdc",
+    "timestamp": "2026-03-09T22:57:23.998Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "ERROR",
+    "source": "global",
+    "message": "Unhandled: Uncaught ReferenceError: LiveTranscriptBubble is not defined",
+    "context": {
+      "filename": "https://voicezettel.ru/_next/static/chunks/src_62710ba6._.js?id=%255Bproject%255D%252Fsrc%252Fcomponents%252Fchat%252FChatArea.tsx+%255Bapp-client%255D+%2528ecmascript%2529",
+      "lineno": 175,
+      "colno": 224
+    }
+  },
+  {
+    "id": "f58cb75b-21d3-4876-8f7b-370dfb50d46c",
+    "timestamp": "2026-03-09T22:57:53.320Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "0b2ba30d-0598-46e3-bee2-512d1783799d",
+    "timestamp": "2026-03-09T23:02:33.828Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "223743f0-590d-4f9a-9404-5cb2cfe66e06",
+    "timestamp": "2026-03-09T23:02:52.239Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "00ce7c79-6bdc-458c-bb99-da19003738d0",
+    "timestamp": "2026-03-09T23:03:49.354Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "5d9bbfd9-e21f-43d0-8321-227dca055485",
+    "timestamp": "2026-03-09T23:04:48.767Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "705d9517-39e7-486b-8e09-9376f380b6fc",
+    "timestamp": "2026-03-09T23:05:25.729Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "f781d202-7c56-47ab-8ebf-958df388aa89",
+    "timestamp": "2026-03-09T23:08:28.072Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "6139d985-0ce7-4ba9-9408-f84c7ec3fd87",
+    "timestamp": "2026-03-09T23:09:33.033Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "e577c026-f70c-4784-a22d-ed8fa5393b68",
+    "timestamp": "2026-03-09T23:28:10.504Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "658b7758-f7b7-42a9-9c38-95b2bb264d6f",
+    "timestamp": "2026-03-09T23:40:47.081Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
   }
 ]

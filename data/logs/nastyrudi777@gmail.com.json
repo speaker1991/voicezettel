@@ -1,0 +1,68 @@
+[
+  {
+    "id": "52d07857-f742-4f83-bf9d-b392d4fb8e4c",
+    "timestamp": "2026-03-09T23:02:52.323Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "f8810294-4ad0-4213-a68b-701a4e2b4351",
+    "timestamp": "2026-03-09T23:11:26.309Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "ed7576f4-1fcb-4ac9-a32b-9817d17a8826",
+    "timestamp": "2026-03-09T23:19:48.555Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "d33a6957-e58f-49ee-8644-05663b65386c",
+    "timestamp": "2026-03-09T23:20:31.369Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "5a9336c6-6989-4454-9bba-4741dcbf99ef",
+    "timestamp": "2026-03-09T23:20:56.462Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "5501f35b-bf4d-47ef-bc34-4e7536643e3c",
+    "timestamp": "2026-03-09T23:26:54.464Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  }
+]

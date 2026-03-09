@@ -10,6 +10,7 @@ interface ChatState {
     modality: ModalityMode;
     audioLevel: number;
     orbMode: OrbMode;
+    liveTranscript: string;
     sessionId?: string;
 }
 
@@ -21,6 +22,7 @@ interface ChatActions {
     setModality: (mode: ModalityMode) => void;
     setAudioLevel: (level: number) => void;
     setOrbMode: (mode: OrbMode) => void;
+    setLiveTranscript: (text: string) => void;
     clearMessages: () => void;
 }
 
@@ -42,6 +44,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
             modality: "voice",
             audioLevel: 0,
             orbMode: "voice" as OrbMode,
+            liveTranscript: "",
             sessionId: undefined,
 
             addMessage: (message) =>
@@ -77,6 +80,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
             setModality: (modality) => set({ modality }),
             setAudioLevel: (audioLevel) => set({ audioLevel }),
             setOrbMode: (orbMode) => set({ orbMode }),
+            setLiveTranscript: (liveTranscript) => set({ liveTranscript }),
             clearMessages: () => set({ messages: SEED_MESSAGES }),
         }),
         {

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "750f1f68-0c38-4602-b3a3-698c4633b335",
+    "timestamp": "2026-03-09T22:57:31.674Z",
+    "userId": "zias221@gmail.com",
+    "level": "ERROR",
+    "source": "global",
+    "message": "Unhandled: Uncaught ReferenceError: LiveTranscriptBubble is not defined",
+    "context": {
+      "filename": "https://voicezettel.ru/_next/static/chunks/src_62710ba6._.js?id=%255Bproject%255D%252Fsrc%252Fcomponents%252Fchat%252FChatArea.tsx+%255Bapp-client%255D+%2528ecmascript%2529",
+      "lineno": 175,
+      "colno": 224
+    }
+  }
+]

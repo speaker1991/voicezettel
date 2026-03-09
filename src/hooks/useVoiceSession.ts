@@ -16,6 +16,7 @@ import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
 import { createRemoteLogger } from "@/lib/remoteLogger";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 export function useVoiceSession() {
     const clientRef = useRef<RealtimeVoiceClient | null>(null);
@@ -32,9 +33,13 @@ export function useVoiceSession() {
     const setOrbState = useChatStore((s) => s.setOrbState);
     const setModality = useChatStore((s) => s.setModality);
     const setAudioLevel = useChatStore((s) => s.setAudioLevel);
+    const setLiveTranscript = useChatStore((s) => s.setLiveTranscript);
 
     // Edge TTS (only used when ttsProvider === "edge")
     const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
+
+    // Web Speech API for real-time transcription display
+    const { start: startRecognition, stop: stopRecognition } = useSpeechRecognition();
 
     // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
@@ -76,6 +81,9 @@ export function useVoiceSession() {
             window.speechSynthesis.cancel();
         }
         resetResponseState();
+        // Stop speech recognition
+        stopRecognition();
+        setLiveTranscript("");
         // Stop audio level metering
         if (audioLevelRafRef.current !== null) {
             cancelAnimationFrame(audioLevelRafRef.current);
@@ -92,7 +100,7 @@ export function useVoiceSession() {
         setIsVoiceActive(false);
         setOrbState("idle");
         setModality("text");
-    }, [setOrbState, setModality, stopEdgeTTS, resetResponseState, setAudioLevel]);
+    }, [setOrbState, setModality, stopEdgeTTS, resetResponseState, setAudioLevel, setLiveTranscript]);
 
     // Hot-swap TTS provider: interrupt active TTS when provider changes mid-session
     useEffect(() => {
@@ -158,6 +166,10 @@ export function useVoiceSession() {
             },
 
             onTranscriptUser: (text: string) => {
+                // Ignore echo transcriptions during TTS playback
+                const currentOrbState = useChatStore.getState().orbState;
+                if (currentOrbState === "speaking") return;
+
                 const userMsg = {
                     id: crypto.randomUUID(),
                     role: "user" as const,
@@ -259,15 +271,12 @@ export function useVoiceSession() {
                     }
 
                     // Launch TTS by current provider
-                    // Mute mic during TTS playback to prevent echo transcription
-                    clientRef.current?.muteMic();
                     const currentTtsProvider = useSettingsStore.getState().ttsProvider;
 
                     if (currentTtsProvider === "edge") {
                         setOrbState("speaking");
                         void speakEdgeTTS(textToSpeak, () => {
                             resetResponseState();
-                            clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
                     } else if (currentTtsProvider === "yandex") {
@@ -288,17 +297,14 @@ export function useVoiceSession() {
                                 audio.onended = () => {
                                     URL.revokeObjectURL(url);
                                     resetResponseState();
-                                    clientRef.current?.unmuteMic();
                                     setOrbState("listening");
                                 };
                                 await audio.play().catch(() => {
                                     resetResponseState();
-                                    clientRef.current?.unmuteMic();
                                     setOrbState("listening");
                                 });
                             } catch {
                                 resetResponseState();
-                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             }
                         })();
@@ -482,6 +488,9 @@ export function useVoiceSession() {
 
             await client.start(voiceContext, useEdge);
             setIsVoiceActive(true);
+
+            // Start Web Speech API for real-time transcription display
+            startRecognition();
 
             const rlog = createRemoteLogger(userId, "voice");
             rlog.info("Voice session started", { ttsProvider: useEdge ? "edge" : useSettingsStore.getState().ttsProvider });
