@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useEffect, useMemo, useCallback } from "react";
-import { Search } from "lucide-react";
+import { useRef, useEffect, useMemo, useCallback, useState } from "react";
+import { Search, RefreshCw } from "lucide-react";
 import { useAdminStore } from "@/stores/adminStore";
-import type { LogLevel } from "@/types/admin";
+import type { LogLevel, LogEntry } from "@/types/admin";
+import type { StoredLog } from "@/types/admin";
 
 const LEVEL_STYLES = {
     INFO: "border-l-transparent",
@@ -24,43 +25,16 @@ const FILTER_BTNS: Array<{ level: LogLevel | "ALL"; label: string }> = [
     { level: "ERROR", label: "ERR" },
 ];
 
-// Generate demo logs
-function generateDemoLogs() {
-    const sources = ["voice", "auth", "api", "tunnel", "ssr"];
-    const msgs = {
-        INFO: [
-            "Session started for user",
-            "Token refreshed successfully",
-            "WebRTC connection established",
-            "Page rendered in 42ms",
-            "Cloudflare tunnel healthy",
-        ],
-        WARN: [
-            "High latency detected: 520ms",
-            "Rate limit approaching: 80%",
-            "Session reconnecting...",
-        ],
-        ERROR: [
-            "WebSocket disconnected unexpectedly",
-            "OAuth token expired",
-            "API timeout after 30s",
-        ],
+function storedLogToEntry(log: StoredLog): LogEntry {
+    return {
+        id: log.id,
+        time: new Date(log.timestamp).toLocaleTimeString("ru-RU"),
+        level: log.level,
+        source: log.source,
+        message: log.message,
+        userId: log.userId,
+        category: log.category,
     };
-
-    const levels: LogLevel[] = ["INFO", "INFO", "INFO", "INFO", "WARN", "ERROR"];
-    const now = Date.now();
-
-    return Array.from({ length: 30 }, (_, i) => {
-        const level = levels[i % levels.length];
-        const pool = msgs[level];
-        return {
-            id: `log-${i}`,
-            time: new Date(now - (30 - i) * 60000).toLocaleTimeString("ru-RU"),
-            level,
-            source: sources[i % sources.length],
-            message: pool[i % pool.length],
-        };
-    });
 }
 
 export function LogsTab() {
@@ -72,16 +46,41 @@ export function LogsTab() {
     const setLogSearch = useAdminStore((s) => s.setLogSearch);
     const setAutoScroll = useAdminStore((s) => s.setAutoScroll);
     const addLog = useAdminStore((s) => s.addLog);
+    const clearLogs = useAdminStore((s) => s.clearLogs);
 
     const scrollRef = useRef<HTMLDivElement>(null);
+    const [loading, setLoading] = useState(false);
+    const [userFilter, setUserFilter] = useState("");
+    const [users, setUsers] = useState<string[]>([]);
 
-    // Seed demo logs on first render
+    // Fetch real logs from server
+    const fetchLogs = useCallback(async () => {
+        setLoading(true);
+        try {
+            const url = userFilter
+                ? `/api/logs?userId=${encodeURIComponent(userFilter)}`
+                : "/api/logs";
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json() as { logs: StoredLog[] };
+            clearLogs();
+            for (const log of data.logs) {
+                addLog(storedLogToEntry(log));
+            }
+            // Extract unique users
+            const uniqueUsers = [...new Set(data.logs.map((l) => l.userId))];
+            setUsers(uniqueUsers);
+        } catch {
+            // Silently fail
+        } finally {
+            setLoading(false);
+        }
+    }, [userFilter, addLog, clearLogs]);
+
+    // Load logs on mount
     useEffect(() => {
-        if (logs.length > 0) return;
-        const demo = generateDemoLogs();
-        for (const log of demo) addLog(log);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        void fetchLogs();
+    }, [fetchLogs]);
 
     // Auto-scroll
     useEffect(() => {
@@ -100,7 +99,8 @@ export function LogsTab() {
             result = result.filter(
                 (l) =>
                     l.message.toLowerCase().includes(q) ||
-                    l.source.toLowerCase().includes(q),
+                    l.source.toLowerCase().includes(q) ||
+                    (l.userId ?? "").toLowerCase().includes(q),
             );
         }
         return result;
@@ -138,6 +138,23 @@ export function LogsTab() {
                         className="w-full rounded-lg border border-white/5 bg-white/[0.03] py-1.5 pl-8 pr-3 text-xs text-zinc-300 outline-none transition-colors placeholder:text-zinc-600 focus:border-violet-500/30"
                     />
                 </div>
+
+                {/* User filter */}
+                {users.length > 0 && (
+                    <select
+                        value={userFilter}
+                        onChange={(e) => setUserFilter(e.target.value)}
+                        className="rounded-lg border border-white/5 bg-white/[0.03] px-2 py-1.5 text-[11px] text-zinc-400 outline-none"
+                    >
+                        <option value="">Все пользователи</option>
+                        {users.map((u) => (
+                            <option key={u} value={u}>
+                                {u}
+                            </option>
+                        ))}
+                    </select>
+                )}
+
                 <div className="flex gap-1">
                     {FILTER_BTNS.map((btn) => (
                         <button
@@ -150,6 +167,16 @@ export function LogsTab() {
                         </button>
                     ))}
                 </div>
+
+                <button
+                    type="button"
+                    onClick={() => void fetchLogs()}
+                    disabled={loading}
+                    className="rounded-md border border-white/5 p-1.5 text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300 disabled:opacity-50"
+                    aria-label="Обновить логи"
+                >
+                    <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+                </button>
             </div>
 
             {/* Log container */}
@@ -173,13 +200,18 @@ export function LogsTab() {
                         <span className="w-11 shrink-0 text-[10px] text-cyan-500/70">
                             {log.source}
                         </span>
+                        {log.userId && (
+                            <span className="w-20 shrink-0 truncate text-[10px] text-violet-400/60">
+                                {log.userId.split("@")[0]}
+                            </span>
+                        )}
                         <span className="text-zinc-400">{log.message}</span>
                     </div>
                 ))}
 
                 {filtered.length === 0 && (
                     <div className="flex h-full items-center justify-center text-xs text-zinc-600">
-                        Нет логов
+                        {loading ? "Загрузка…" : "Нет логов"}
                     </div>
                 )}
             </div>

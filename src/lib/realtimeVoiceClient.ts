@@ -31,6 +31,9 @@ export class RealtimeVoiceClient {
     private textOnlyMode = false;
     private callbacks: VoiceClientCallbacks;
     private contextStr = "";
+    private audioCtx: AudioContext | null = null;
+    private analyser: AnalyserNode | null = null;
+    private analyserData: Uint8Array<ArrayBuffer> | null = null;
 
     constructor(callbacks: VoiceClientCallbacks) {
         this.callbacks = callbacks;
@@ -98,6 +101,19 @@ export class RealtimeVoiceClient {
             logger.warn("Added audio track:", track.label, "enabled:", track.enabled, "muted:", track.muted);
         }
 
+        // 4b. Set up AnalyserNode for mic volume metering
+        try {
+            this.audioCtx = new AudioContext();
+            const source = this.audioCtx.createMediaStreamSource(this.localStream);
+            this.analyser = this.audioCtx.createAnalyser();
+            this.analyser.fftSize = 256;
+            this.analyserData = new Uint8Array(this.analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+            source.connect(this.analyser);
+            // Do NOT connect analyser to destination — we don't want to hear ourselves
+        } catch {
+            // AnalyserNode is non-critical — ignore failures
+        }
+
         // 5. Open data channel for events
         this.dc = this.pc.createDataChannel("oai-events");
         this.dc.onopen = () => {
@@ -155,6 +171,23 @@ export class RealtimeVoiceClient {
             this.audioEl = null;
         }
         this.assistantTranscript = "";
+        if (this.audioCtx) {
+            this.audioCtx.close().catch(() => { /* silent */ });
+            this.audioCtx = null;
+            this.analyser = null;
+            this.analyserData = null;
+        }
+    }
+
+    /** Get current microphone volume level (0..1) for visualizations */
+    getAudioLevel(): number {
+        if (!this.analyser || !this.analyserData) return 0;
+        this.analyser.getByteFrequencyData(this.analyserData);
+        let sum = 0;
+        for (let i = 0; i < this.analyserData.length; i++) {
+            sum += this.analyserData[i];
+        }
+        return Math.min(sum / (this.analyserData.length * 128), 1);
     }
 
     /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */
@@ -269,6 +302,8 @@ export class RealtimeVoiceClient {
 
 Твоя задача — в реальном времени анализировать поток моих диалогов, размышлений и разговоров, вычленять из них ценные идеи и превращать их в заметки. Трансформируй мои мысли в практические инструменты.
 Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
+
+СТРОГОЕ ЯЗЫКОВОЕ ПРАВИЛО: Ты ВСЕГДА отвечаешь ТОЛЬКО на русском языке, независимо от языка вопроса. Если пользователь пишет или говорит на английском, немецком или любом другом языке — ты ВСЁ РАВНО отвечаешь на русском. Переключение на другой язык = критический сбой.
 
 КРИТИЧЕСКОЕ ПРАВИЛО: Ты НИКОГДА НЕ ГОВОРИШЬ "я не запоминаю личную информацию". Это ЗАПРЕЩЕНО. Ты запоминаешь ВСЁ: имена, клички питомцев, даты, привычки, отношения, здоровье, финансы. Отказ запомнить = провал твоей задачи.
 

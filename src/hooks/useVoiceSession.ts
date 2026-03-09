@@ -15,6 +15,7 @@ import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
+import { createRemoteLogger } from "@/lib/remoteLogger";
 
 export function useVoiceSession() {
     const clientRef = useRef<RealtimeVoiceClient | null>(null);
@@ -30,6 +31,7 @@ export function useVoiceSession() {
     );
     const setOrbState = useChatStore((s) => s.setOrbState);
     const setModality = useChatStore((s) => s.setModality);
+    const setAudioLevel = useChatStore((s) => s.setAudioLevel);
 
     // Edge TTS (only used when ttsProvider === "edge")
     const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
@@ -42,6 +44,10 @@ export function useVoiceSession() {
     const edgeTtsMessageShown = useRef(false);
     const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const audioLevelRafRef = useRef<number | null>(null);
+    const ttsAudioCtxRef = useRef<AudioContext | null>(null);
+    const ttsAnalyserRef = useRef<AnalyserNode | null>(null);
+    const ttsAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
     // Single source of truth for resetting response cycle state
     const resetResponseState = useCallback(() => {
@@ -70,10 +76,23 @@ export function useVoiceSession() {
             window.speechSynthesis.cancel();
         }
         resetResponseState();
+        // Stop audio level metering
+        if (audioLevelRafRef.current !== null) {
+            cancelAnimationFrame(audioLevelRafRef.current);
+            audioLevelRafRef.current = null;
+        }
+        setAudioLevel(0);
+        // Clean up TTS analyser
+        if (ttsAudioCtxRef.current) {
+            ttsAudioCtxRef.current.close().catch(() => { /* silent */ });
+            ttsAudioCtxRef.current = null;
+            ttsAnalyserRef.current = null;
+            ttsAnalyserDataRef.current = null;
+        }
         setIsVoiceActive(false);
         setOrbState("idle");
         setModality("text");
-    }, [setOrbState, setModality, stopEdgeTTS, resetResponseState]);
+    }, [setOrbState, setModality, stopEdgeTTS, resetResponseState, setAudioLevel]);
 
     // Hot-swap TTS provider: interrupt active TTS when provider changes mid-session
     useEffect(() => {
@@ -117,6 +136,21 @@ export function useVoiceSession() {
         edgeTtsAudioEl.setAttribute("playsinline", "true");
         edgeTtsAudioEl.style.display = "none";
         document.body.appendChild(edgeTtsAudioEl);
+
+        // Set up TTS audio analyser for orb visualization during assistant speech
+        try {
+            const ttsCtx = new AudioContext();
+            const ttsSource = ttsCtx.createMediaElementSource(edgeTtsAudioEl);
+            const ttsAnalyser = ttsCtx.createAnalyser();
+            ttsAnalyser.fftSize = 256;
+            ttsSource.connect(ttsAnalyser);
+            ttsAnalyser.connect(ttsCtx.destination); // must connect to hear audio
+            ttsAudioCtxRef.current = ttsCtx;
+            ttsAnalyserRef.current = ttsAnalyser;
+            ttsAnalyserDataRef.current = new Uint8Array(ttsAnalyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+        } catch {
+            // Non-critical — TTS will still play, just no orb reactivity
+        }
 
         const callbacks: VoiceClientCallbacks = {
             onConnected: () => {
@@ -225,12 +259,15 @@ export function useVoiceSession() {
                     }
 
                     // Launch TTS by current provider
+                    // Mute mic during TTS playback to prevent echo transcription
+                    clientRef.current?.muteMic();
                     const currentTtsProvider = useSettingsStore.getState().ttsProvider;
 
                     if (currentTtsProvider === "edge") {
                         setOrbState("speaking");
                         void speakEdgeTTS(textToSpeak, () => {
                             resetResponseState();
+                            clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }, edgeTtsAudioEl);
                     } else if (currentTtsProvider === "yandex") {
@@ -251,14 +288,17 @@ export function useVoiceSession() {
                                 audio.onended = () => {
                                     URL.revokeObjectURL(url);
                                     resetResponseState();
+                                    clientRef.current?.unmuteMic();
                                     setOrbState("listening");
                                 };
                                 await audio.play().catch(() => {
                                     resetResponseState();
+                                    clientRef.current?.unmuteMic();
                                     setOrbState("listening");
                                 });
                             } catch {
                                 resetResponseState();
+                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             }
                         })();
@@ -278,6 +318,7 @@ export function useVoiceSession() {
                             browserTtsWatchdogRef.current = setTimeout(() => {
                                 window.speechSynthesis.cancel();
                                 resetResponseState();
+                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                                 browserTtsWatchdogRef.current = null;
                             }, watchdogMs);
@@ -292,6 +333,7 @@ export function useVoiceSession() {
                                     browserTtsKeepAliveRef.current = null;
                                 }
                                 resetResponseState();
+                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             };
 
@@ -314,6 +356,7 @@ export function useVoiceSession() {
                             }, 10000);
                         } else {
                             resetResponseState();
+                            clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }
                     }
@@ -439,11 +482,36 @@ export function useVoiceSession() {
 
             await client.start(voiceContext, useEdge);
             setIsVoiceActive(true);
+
+            const rlog = createRemoteLogger(userId, "voice");
+            rlog.info("Voice session started", { ttsProvider: useEdge ? "edge" : useSettingsStore.getState().ttsProvider });
+
+            // Start audio level metering loop for orb visualization
+            const getTtsLevel = (): number => {
+                if (!ttsAnalyserRef.current || !ttsAnalyserDataRef.current) return 0;
+                ttsAnalyserRef.current.getByteFrequencyData(ttsAnalyserDataRef.current);
+                let sum = 0;
+                for (let i = 0; i < ttsAnalyserDataRef.current.length; i++) {
+                    sum += ttsAnalyserDataRef.current[i];
+                }
+                return Math.min(sum / (ttsAnalyserDataRef.current.length * 128), 1);
+            };
+            const meterLoop = () => {
+                const orbSt = useChatStore.getState().orbState;
+                if (orbSt === "speaking") {
+                    // During TTS playback, read volume from TTS audio
+                    setAudioLevel(getTtsLevel());
+                } else if (clientRef.current) {
+                    // Otherwise read mic volume
+                    setAudioLevel(clientRef.current.getAudioLevel());
+                }
+                audioLevelRafRef.current = requestAnimationFrame(meterLoop);
+            };
+            audioLevelRafRef.current = requestAnimationFrame(meterLoop);
         } catch (err) {
-            logger.error(
-                "Failed to start voice session:",
-                err instanceof Error ? err.message : err
-            );
+            const errMsg = err instanceof Error ? err.message : "Unknown error";
+            logger.error("Failed to start voice session:", errMsg);
+            createRemoteLogger(userId, "voice").error(`Session start failed: ${errMsg}`);
             useNotificationStore
                 .getState()
                 .addNotification(

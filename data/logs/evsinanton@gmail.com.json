@@ -1,0 +1,24 @@
+[
+  {
+    "id": "6b4509f5-27d6-48e2-be2d-2fbc6489170d",
+    "timestamp": "2026-03-09T22:30:17.697Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "c3fa74ad-854d-45e0-b2d9-240e9ec83bca",
+    "timestamp": "2026-03-09T22:35:58.003Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  }
+]

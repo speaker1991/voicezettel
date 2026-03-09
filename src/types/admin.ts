@@ -46,10 +46,38 @@ export const LogEntrySchema = z.object({
     level: LogLevelSchema,
     source: z.string(),
     message: z.string(),
+    userId: z.string().optional(),
+    category: z.string().optional(),
 });
 
 export type LogLevel = z.infer<typeof LogLevelSchema>;
 export type LogEntry = z.infer<typeof LogEntrySchema>;
+
+// ── Remote log payload (client → server) ─────────────────────
+export const RemoteLogPayloadSchema = z.object({
+    userId: z.string(),
+    level: LogLevelSchema,
+    source: z.string(),
+    message: z.string(),
+    category: z.string().optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type RemoteLogPayload = z.infer<typeof RemoteLogPayloadSchema>;
+
+// ── Stored log (server-side, with generated fields) ──────────
+export const StoredLogSchema = z.object({
+    id: z.string(),
+    timestamp: z.string(),
+    userId: z.string(),
+    level: LogLevelSchema,
+    source: z.string(),
+    message: z.string(),
+    category: z.string().optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type StoredLog = z.infer<typeof StoredLogSchema>;
 
 // ── Activity feed ────────────────────────────────────────────
 export const ActivityItemSchema = z.object({

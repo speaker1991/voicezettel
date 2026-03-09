@@ -13,7 +13,7 @@ interface ParticleOrbProps {
 }
 
 // ── constants ────────────────────────────────────────────────
-const DEFAULT_PARTICLES = 8000;
+const DEFAULT_PARTICLES = 5000;
 const SPHERE_RADIUS = 2.0;
 
 // ── vertex shader ────────────────────────────────────────────
@@ -118,21 +118,24 @@ const VERTEX_SHADER = /* glsl */ `
 
         vec4 mvPosition = modelViewMatrix * vec4(newPos, 1.0);
         gl_Position = projectionMatrix * mvPosition;
-        gl_PointSize = 2.0;
+
+        // Voice-reactive particle size
+        float baseSize = 2.2;
+        float audioBoost = uAudioLevel * uAudioReact * 4.0;
+        gl_PointSize = baseSize + audioBoost;
     }
 `;
 
 // ── fragment shader ──────────────────────────────────────────
 const FRAGMENT_SHADER = /* glsl */ `
-    uniform vec3 uColorUser;
-    uniform vec3 uColorAI;
+    uniform vec3 uColorBase;
+    uniform vec3 uColorSpeak;
     uniform float uColorBlend;
 
     varying float vAlpha;
 
     void main() {
-        // 0 = user purple, 1 = AI pink
-        vec3 col = mix(uColorUser, uColorAI, uColorBlend);
+        vec3 col = mix(uColorBase, uColorSpeak, uColorBlend);
         gl_FragColor = vec4(col, vAlpha);
     }
 `;
@@ -141,21 +144,21 @@ const FRAGMENT_SHADER = /* glsl */ `
 interface OrbParams {
     intensity: number;
     audioReact: number;
-    colorBlend: number; // 0 = user color, 1 = AI color
+    colorBlend: number; // 0 = base purple, 1 = speaking color
 }
 
 function stateToParams(state: OrbState): OrbParams {
     switch (state) {
         case "idle":
-            return { intensity: 0.0, audioReact: 0.0, colorBlend: 0.5 };
+            return { intensity: 0.0, audioReact: 0.0, colorBlend: 0.0 };
         case "listening":
             return { intensity: 0.15, audioReact: 1.0, colorBlend: 0.0 };
         case "thinking":
-            return { intensity: 0.85, audioReact: 0.0, colorBlend: 1.0 };
+            return { intensity: 0.85, audioReact: 0.0, colorBlend: 0.3 };
         case "speaking":
-            return { intensity: 0.4, audioReact: 0.4, colorBlend: 1.0 };
+            return { intensity: 0.4, audioReact: 0.8, colorBlend: 1.0 };
         case "backgroundListening":
-            return { intensity: 0.05, audioReact: 0.2, colorBlend: 0.5 };
+            return { intensity: 0.05, audioReact: 0.2, colorBlend: 0.0 };
     }
 }
 
@@ -237,7 +240,7 @@ export function ParticleOrb({
                 alpha: true,
                 antialias: false,
             });
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             renderer.setSize(width, height);
             renderer.setClearColor(0x000000, 0);
             container.appendChild(renderer.domElement);
@@ -261,9 +264,9 @@ export function ParticleOrb({
                     uAudioLevel: { value: 0 },
                     uIntensity: { value: 0 },
                     uAudioReact: { value: 0 },
-                    uColorUser: { value: new THREE.Color(0x7F22FE) },
-                    uColorAI: { value: new THREE.Color(0xBA38BE) },
-                    uColorBlend: { value: 0.5 },
+                    uColorBase: { value: new THREE.Color(0x8B5CF6) },
+                    uColorSpeak: { value: new THREE.Color(0xBA38BE) },
+                    uColorBlend: { value: 0 },
                 },
                 transparent: true,
                 depthWrite: false,
@@ -280,7 +283,7 @@ export function ParticleOrb({
             let smoothIntensity = 0;
             let smoothAudioReact = 0;
             let smoothAudio = 0;
-            let smoothColorBlend = 0.5;
+            let smoothColorBlend = 0;
             let scaledTime = 0;
             let rotTime = 0;
             let lastTime = 0;
@@ -390,18 +393,7 @@ export function ParticleOrb({
             tabIndex={0}
             aria-label="Toggle voice session"
         >
-            {/* CSS fallback orb — visible even if WebGL fails */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div
-                    className="rounded-full"
-                    style={{
-                        width: "60%",
-                        height: "60%",
-                        background: "radial-gradient(circle, rgba(139,92,246,0.4) 0%, rgba(139,92,246,0.1) 50%, transparent 70%)",
-                        filter: "blur(8px)",
-                    }}
-                />
-            </div>
+
         </div>
     );
 }
