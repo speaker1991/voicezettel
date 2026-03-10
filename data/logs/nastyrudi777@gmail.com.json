@@ -64,5 +64,27 @@
     "context": {
       "ttsProvider": "yandex"
     }
+  },
+  {
+    "id": "8e54b67f-30e7-42c9-b0a9-a2b374175c41",
+    "timestamp": "2026-03-10T18:18:25.752Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "797a1a97-f2b3-497d-8f97-d49544556604",
+    "timestamp": "2026-03-10T18:35:43.555Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
   }
 ]

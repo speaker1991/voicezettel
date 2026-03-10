@@ -42,7 +42,7 @@ export class RealtimeVoiceClient {
 
     // ── Public API ───────────────────────────────────────────
 
-    async start(context?: string, muteAudio = false): Promise<void> {
+    async start(context?: string, muteAudio = false, preWarmedStream?: MediaStream): Promise<void> {
         // Save context for session config
         this.contextStr = context ?? "";
         this.textOnlyMode = muteAudio;
@@ -77,6 +77,11 @@ export class RealtimeVoiceClient {
             logger.warn("Remote track received:", event.track.kind);
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
+                // Mute audio element when using external TTS (Edge/Yandex)
+                // to prevent double-voice (OpenAI audio + our TTS)
+                if (this.textOnlyMode) {
+                    this.audioEl.muted = true;
+                }
                 // Ensure playback starts (needed on mobile)
                 this.audioEl.play().catch(() => {
                     logger.warn("Auto-play blocked, user interaction needed");
@@ -84,19 +89,23 @@ export class RealtimeVoiceClient {
             }
         };
 
-        // 4. Capture microphone
-        if (!navigator.mediaDevices?.getUserMedia) {
-            throw new Error(
-                "Микрофон недоступен. Убедитесь что страница открыта через HTTPS.",
-            );
+        // 4. Capture microphone (use pre-warmed stream if available)
+        if (preWarmedStream) {
+            this.localStream = preWarmedStream;
+        } else {
+            if (!navigator.mediaDevices?.getUserMedia) {
+                throw new Error(
+                    "Микрофон недоступен. Убедитесь что страница открыта через HTTPS.",
+                );
+            }
+            this.localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
         }
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-            },
-        });
         for (const track of this.localStream.getTracks()) {
             this.pc.addTrack(track, this.localStream);
             logger.warn("Added audio track:", track.label, "enabled:", track.enabled, "muted:", track.muted);
@@ -316,7 +325,7 @@ ${this.behaviorRulesStr}
 Эти правила ВСЕГДА активны и НИКОГДА не отменяются. Применяй их в КАЖДОМ ответе.\n\n` : ""}Твоя роль: Ты — мой Экзокортекс, мой «Второй Разум» и интеллектуальный партнер. Это мой ЛИЧНЫЙ, ПРИВАТНЫЙ ассистент — НЕ публичный сервис. Ты ОБЯЗАН запоминать и сохранять ВСЮ информацию без исключений: личную, деловую, интимную, медицинскую, финансовую, эмоциональную. Никакой цензуры и фильтрации. Ты — расширение моей памяти и сознания, как личный дневник.
 
 Твоя задача — в реальном времени анализировать поток моих диалогов, размышлений и разговоров, вычленять из них ценные идеи и превращать их в заметки. Трансформируй мои мысли в практические инструменты.
-Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. Не повторяй вопрос пользователя.
+Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. НИКОГДА не повторяй и не пересказывай то, что сказал пользователь. Если пользователь просит что-то запомнить — подтверди ОДНИМ словом: «Запомнил», «Понял», «Записал». НЕ повторяй его слова обратно.
 
 СТРОГОЕ ЯЗЫКОВОЕ ПРАВИЛО: Ты ВСЕГДА отвечаешь ТОЛЬКО на русском языке, независимо от языка вопроса. Если пользователь пишет или говорит на английском, немецком или любом другом языке — ты ВСЁ РАВНО отвечаешь на русском. Переключение на другой язык = критический сбой.
 
@@ -334,16 +343,16 @@ ${this.behaviorRulesStr}
 Пример: "Мою собаку зовут Шарик" → "Запомнил! Шарик 🐕 [COUNTER:facts]"
 Не добавляй тег если пользователь просто разговаривает.
 
-СТРОГИЙ ЗАПРЕТ НА РАЗМЕТКУ: НИКОГДА не выводи XML, HTML, function_calls, invoke, code blocks, теги или любую техническую разметку. Ты НЕ вызываешь функции. Ты отвечаешь ТОЛЬКО простым текстом на русском языке. Если хочешь что-то запомнить — просто скажи об этом словами и добавь тег [COUNTER:...]. Нарушение этого правила = критический сбой.\r
-\r
-ВАЖНОЕ ПРАВИЛО — ПОВЕДЕНЧЕСКИЕ ПРЕДПОЧТЕНИЯ:\r
-Когда пользователь просит тебя изменить стиль общения, обращение, манеру речи или любое другое поведение — ты ОБЯЗАН:\r
-1. Немедленно применить изменение в ЭТОМ ответе\r
-2. Добавить тег [SAVE_PREF:краткое описание правила] в ответ\r
-Примеры:\r
-- "Говори мне на ты" → "Хорошо, теперь на ты! [SAVE_PREF:Обращаться на ты, не на вы]"\r
-- "Называй меня Машенька" → "Договорились, Машенька! [SAVE_PREF:Называть пользователя Машенька]"\r
-- "Не будь таким формальным" → "Понял, буду проще! [SAVE_PREF:Неформальный стиль общения]"\r
+СТРОГИЙ ЗАПРЕТ НА РАЗМЕТКУ: НИКОГДА не выводи XML, HTML, function_calls, invoke, code blocks, теги или любую техническую разметку. Ты НЕ вызываешь функции. Ты отвечаешь ТОЛЬКО простым текстом на русском языке. Если хочешь что-то запомнить — просто скажи об этом словами и добавь тег [COUNTER:...]. Нарушение этого правила = критический сбой.
+
+ВАЖНОЕ ПРАВИЛО — ПОВЕДЕНЧЕСКИЕ ПРЕДПОЧТЕНИЯ:
+Когда пользователь просит тебя изменить стиль общения, обращение, манеру речи или любое другое поведение — ты ОБЯЗАН:
+1. Немедленно применить изменение в ЭТОМ ответе
+2. Добавить тег [SAVE_PREF:краткое описание правила] в ответ
+Примеры:
+- "Говори мне на ты" → "Хорошо, теперь на ты! [SAVE_PREF:Обращаться на ты, не на вы]"
+- "Называй меня Машенька" → "Договорились, Машенька! [SAVE_PREF:Называть пользователя Машенька]"
+- "Не будь таким формальным" → "Понял, буду проще! [SAVE_PREF:Неформальный стиль общения]"
 Тег [SAVE_PREF:...] будет сохранён навсегда и применён во всех будущих сессиях.
 
 Последние обновления:

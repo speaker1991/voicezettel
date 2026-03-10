@@ -42,6 +42,9 @@ export function useVoiceSession() {
     // Web Speech API for real-time transcription display
     const { start: startRecognition, stop: stopRecognition } = useSpeechRecognition();
 
+    // Pre-warmed microphone stream for instant startup
+    const preWarmedStreamRef = useRef<MediaStream | null>(null);
+
     // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
     const isServerResponseActive = useRef(false); // true while OpenAI is streaming text, false after response.text.done
@@ -107,6 +110,34 @@ export function useVoiceSession() {
         setOrbState("idle");
         setModality("text");
     }, [setOrbState, setModality, stopEdgeTTS, resetResponseState, setAudioLevel, setLiveTranscript]);
+    // Pre-warm microphone: capture stream early so tapping the orb starts instantly
+    useEffect(() => {
+        if (!navigator.mediaDevices?.getUserMedia) return;
+        navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+        }).then((stream) => {
+            // Only cache if no voice session is already active
+            if (!clientRef.current) {
+                preWarmedStreamRef.current = stream;
+            } else {
+                // Voice session already started — release this stream
+                for (const track of stream.getTracks()) track.stop();
+            }
+        }).catch(() => {
+            // Permission denied or unavailable — will retry at session start
+        });
+        return () => {
+            // Release pre-warmed stream on unmount if not used
+            if (preWarmedStreamRef.current) {
+                for (const track of preWarmedStreamRef.current.getTracks()) track.stop();
+                preWarmedStreamRef.current = null;
+            }
+        };
+    }, []);
 
     // Hot-swap TTS provider: interrupt active TTS when provider changes mid-session
     useEffect(() => {
@@ -140,7 +171,8 @@ export function useVoiceSession() {
         if (clientRef.current) return;
 
         const ttsProvider = useSettingsStore.getState().ttsProvider;
-        const useEdge = ttsProvider === "edge";
+        // All TTS providers (browser/edge/yandex) are external — always mute OpenAI audio
+        const useEdge = true;
 
         setModality("voice");
         setOrbState("listening"); // Show listening while connecting
@@ -176,22 +208,19 @@ export function useVoiceSession() {
                 const currentOrbState = useChatStore.getState().orbState;
                 if (currentOrbState === "speaking") return;
 
-                const userMsg = {
+                // Mark that we received a user transcript for this cycle
+                userTranscriptReceived.current = true;
+
+                // Clear live transcript since final text arrived
+                setLiveTranscript("");
+
+                addMessage({
                     id: crypto.randomUUID(),
                     role: "user" as const,
                     content: text,
                     timestamp: new Date().toISOString(),
                     source: "voice" as const,
-                };
-
-                // Check if last message is from assistant (AI responded before transcript arrived)
-                const messages = useChatStore.getState().messages;
-                const lastMsg = messages[messages.length - 1];
-                if (lastMsg && lastMsg.role === "assistant") {
-                    insertMessageBeforeLastAssistant(userMsg);
-                } else {
-                    addMessage(userMsg);
-                }
+                });
             },
 
             onTranscriptAssistant: (accumulated: string) => {
@@ -267,10 +296,12 @@ export function useVoiceSession() {
                         try {
                             const prefRes = await fetch(`/api/preferences?userId=${encodeURIComponent(userId)}`);
                             if (prefRes.ok) {
-                                const prefData = (await prefRes.json()) as { rules: string[] };
-                                if (prefData.rules.length > 0 && clientRef.current) {
-                                    const rulesText = prefData.rules.map((r: string, i: number) => `${i + 1}. ${r}`).join("\n");
-                                    clientRef.current.setBehaviorRules(rulesText);
+                                const prefData = (await prefRes.json()) as { rules: string[]; profile: string | null };
+                                if (clientRef.current) {
+                                    // Prefer condensed profile over individual rules
+                                    const rulesText = prefData.profile
+                                        ?? prefData.rules.map((r: string, i: number) => `${i + 1}. ${r}`).join("\n");
+                                    if (rulesText) clientRef.current.setBehaviorRules(rulesText);
                                 }
                             }
                         } catch { /* silent */ }
@@ -526,10 +557,12 @@ export function useVoiceSession() {
             try {
                 const prefRes = await fetch(`/api/preferences?userId=${encodeURIComponent(userId)}`);
                 if (prefRes.ok) {
-                    const prefData = (await prefRes.json()) as { rules: string[] };
-                    if (prefData.rules.length > 0) {
-                        savedBehaviorRules = prefData.rules.map((r, i) => `${i + 1}. ${r}`).join("\n");
-                    }
+                    const prefData = (await prefRes.json()) as { rules: string[]; profile: string | null };
+                    // Prefer condensed profile over individual rules
+                    savedBehaviorRules = prefData.profile
+                        ?? (prefData.rules.length > 0
+                            ? prefData.rules.map((r, i) => `${i + 1}. ${r}`).join("\n")
+                            : "");
                 }
             } catch {
                 // Silent
@@ -543,7 +576,9 @@ export function useVoiceSession() {
                 window.speechSynthesis.speak(warmup);
             }
 
-            await client.start(voiceContext, useEdge);
+            await client.start(voiceContext, useEdge, preWarmedStreamRef.current ?? undefined);
+            // Clear pre-warmed stream ref (ownership transferred to client)
+            preWarmedStreamRef.current = null;
             if (savedBehaviorRules) {
                 client.setBehaviorRules(savedBehaviorRules);
             }

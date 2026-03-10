@@ -308,5 +308,49 @@
     "context": {
       "ttsProvider": "yandex"
     }
+  },
+  {
+    "id": "6b1e375a-b261-4367-b43d-627588cbc1d4",
+    "timestamp": "2026-03-10T00:34:37.657Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "90a8fd5a-981d-4a49-ad52-4d661045532c",
+    "timestamp": "2026-03-10T00:39:10.488Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "1c102223-4392-45d6-bc6c-b9ea1a53a67a",
+    "timestamp": "2026-03-10T03:22:00.960Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "3b9997c6-416e-4a56-8bb1-d44b0cfc1ec5",
+    "timestamp": "2026-03-10T03:23:48.643Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
   }
 ]

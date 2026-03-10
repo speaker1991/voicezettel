@@ -4,6 +4,8 @@ import path from "path";
 import { z } from "zod";
 
 const DATA_DIR = path.join(process.cwd(), "data", "settings");
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const CONDENSE_THRESHOLD = 5;
 
 const AddPrefSchema = z.object({
     userId: z.string(),
@@ -12,6 +14,7 @@ const AddPrefSchema = z.object({
 
 interface SettingsFile {
     behaviorRules?: string[];
+    condensedProfile?: string;
     [key: string]: unknown;
 }
 
@@ -37,9 +40,52 @@ async function writeSettings(userId: string, settings: SettingsFile): Promise<vo
     await fs.writeFile(getSettingsPath(userId), JSON.stringify(settings, null, 2), "utf-8");
 }
 
+/**
+ * Condense multiple rules into a compact user profile via GPT-4o-mini.
+ */
+async function condenseRules(rules: string[]): Promise<string | null> {
+    if (!OPENAI_API_KEY || rules.length < CONDENSE_THRESHOLD) return null;
+
+    try {
+        const rulesList = rules.map((r, i) => `${i + 1}. ${r}`).join("\n");
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${OPENAI_API_KEY}`,
+            },
+            body: JSON.stringify({
+                model: "gpt-4o-mini",
+                max_tokens: 300,
+                temperature: 0.3,
+                messages: [
+                    {
+                        role: "system",
+                        content: "Ты — утилита сжатия правил. Получив список правил поведения ассистента, объедини их в ОДИН компактный абзац (макс 3-4 предложения). Сохрани ВСЕ требования без потери смысла. Ответ — только сжатый текст, без вступлений.",
+                    },
+                    {
+                        role: "user",
+                        content: `Сожми эти правила в компактный профиль:\n${rulesList}`,
+                    },
+                ],
+            }),
+        });
+
+        if (!res.ok) return null;
+
+        const data = (await res.json()) as {
+            choices: { message: { content: string } }[];
+        };
+        const condensed = data.choices?.[0]?.message?.content?.trim();
+        return condensed || null;
+    } catch {
+        return null;
+    }
+}
+
 const MAX_RULES = 50;
 
-// POST — add a behavior rule
+// POST — add a behavior rule, auto-condense when threshold exceeded
 export async function POST(req: NextRequest): Promise<NextResponse> {
     try {
         const body: unknown = await req.json();
@@ -59,9 +105,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         rules.push(rule);
         settings.behaviorRules = rules.slice(-MAX_RULES);
+
+        // Auto-condense when threshold exceeded
+        let condensed = false;
+        if (settings.behaviorRules.length >= CONDENSE_THRESHOLD) {
+            const profile = await condenseRules(settings.behaviorRules);
+            if (profile) {
+                settings.condensedProfile = profile;
+                condensed = true;
+            }
+        }
+
         await writeSettings(userId, settings);
 
-        return NextResponse.json({ ok: true, totalRules: settings.behaviorRules.length });
+        return NextResponse.json({
+            ok: true,
+            totalRules: settings.behaviorRules.length,
+            condensed,
+            profile: settings.condensedProfile ?? null,
+        });
     } catch (err) {
         return NextResponse.json(
             { error: err instanceof Error ? err.message : "Unknown error" },
@@ -70,7 +132,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 }
 
-// GET — read behavior rules for a user
+// GET — read behavior rules (returns condensed profile if available)
 export async function GET(req: NextRequest): Promise<NextResponse> {
     const userId = req.nextUrl.searchParams.get("userId");
     if (!userId) {
@@ -78,5 +140,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     const settings = await readSettings(userId);
-    return NextResponse.json({ rules: settings.behaviorRules ?? [] });
+    return NextResponse.json({
+        rules: settings.behaviorRules ?? [],
+        profile: settings.condensedProfile ?? null,
+    });
 }

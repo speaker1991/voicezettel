@@ -11,5 +11,134 @@
       "lineno": 175,
       "colno": 224
     }
+  },
+  {
+    "id": "69ebf14c-b005-4b1c-bba3-24eeecf094ad",
+    "timestamp": "2026-03-10T03:28:53.407Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "b14be297-9531-494a-a63b-0c755371e3d6",
+    "timestamp": "2026-03-10T03:30:37.667Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "70e865eb-3ac3-4384-b92f-c3989ea8277b",
+    "timestamp": "2026-03-10T03:47:20.666Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "a769d3b7-4045-4c76-8382-98a0a6f3b0d7",
+    "timestamp": "2026-03-10T05:51:34.035Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "af4d1cdb-7c97-4001-bbb6-6452b72e1861",
+    "timestamp": "2026-03-10T05:52:07.444Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "6109bc09-1069-43ec-a98d-6749cb88d548",
+    "timestamp": "2026-03-10T05:52:48.632Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "e3553d82-0a84-44b5-9038-2fe814627137",
+    "timestamp": "2026-03-10T14:34:42.171Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "5806c416-fd3c-4de5-b8da-1f4f9bd6ad4c",
+    "timestamp": "2026-03-10T14:41:22.528Z",
+    "userId": "zias221@gmail.com",
+    "level": "ERROR",
+    "source": "voice",
+    "message": "Session start failed: Permission denied"
+  },
+  {
+    "id": "d3d55903-8f8f-470a-9ea0-65150d3a3420",
+    "timestamp": "2026-03-10T14:42:08.462Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "7de81847-65ca-45df-9581-464e5cba004b",
+    "timestamp": "2026-03-10T14:42:29.041Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "d55e39b4-3baf-44b8-8e86-6d4b95eddd5b",
+    "timestamp": "2026-03-10T14:46:52.658Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "92547256-44f5-4727-b958-79fa3531a9e0",
+    "timestamp": "2026-03-10T18:02:02.964Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
   }
 ]
