@@ -11,6 +11,7 @@ import { useAnimationStore } from "@/stores/animationStore";
 import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
+import { extractPreferences, stripPrefTag } from "@/lib/detectPreference";
 import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
 import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
@@ -53,6 +54,7 @@ export function useVoiceSession() {
     const ttsAudioCtxRef = useRef<AudioContext | null>(null);
     const ttsAnalyserRef = useRef<AnalyserNode | null>(null);
     const ttsAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const ttsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Single source of truth for resetting response cycle state
     const resetResponseState = useCallback(() => {
@@ -61,6 +63,10 @@ export function useVoiceSession() {
         userTranscriptReceived.current = false;
         lastAssistantText.current = "";
         edgeTtsMessageShown.current = false;
+        if (ttsWatchdogRef.current) {
+            clearTimeout(ttsWatchdogRef.current);
+            ttsWatchdogRef.current = null;
+        }
     }, []);
 
     const stopVoiceInternal = useCallback(() => {
@@ -245,15 +251,43 @@ export function useVoiceSession() {
 
                 // Save text before TTS starts
                 const savedText = lastAssistantText.current;
-                const aiText = counterType
-                    ? stripCounterTag(savedText)
-                    : savedText;
+
+                // Detect and save behavior preferences
+                const prefs = extractPreferences(savedText);
+                if (prefs.length > 0) {
+                    for (const rule of prefs) {
+                        void fetch("/api/preferences", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId, rule }),
+                        }).catch(() => { /* silent */ });
+                    }
+                    // Live update: re-fetch all rules and update session immediately
+                    void (async () => {
+                        try {
+                            const prefRes = await fetch(`/api/preferences?userId=${encodeURIComponent(userId)}`);
+                            if (prefRes.ok) {
+                                const prefData = (await prefRes.json()) as { rules: string[] };
+                                if (prefData.rules.length > 0 && clientRef.current) {
+                                    const rulesText = prefData.rules.map((r: string, i: number) => `${i + 1}. ${r}`).join("\n");
+                                    clientRef.current.setBehaviorRules(rulesText);
+                                }
+                            }
+                        } catch { /* silent */ }
+                    })();
+                }
+
+                // Strip both COUNTER and SAVE_PREF tags from visible text
+                let cleanText = savedText;
+                if (counterType) cleanText = stripCounterTag(cleanText);
+                cleanText = stripPrefTag(cleanText);
+
+                const aiText = cleanText;
 
                 // ── TTS: speak the response ──
                 if (savedText) {
-                    const textToSpeak = counterType
-                        ? stripCounterTag(savedText)
-                        : savedText;
+                    // Clean text for TTS (no internal tags)
+                    const textToSpeak = cleanText;
 
                     // Add message to chat (unified for both providers)
                     if (!edgeTtsMessageShown.current && textToSpeak) {
@@ -275,6 +309,12 @@ export function useVoiceSession() {
 
                     if (currentTtsProvider === "edge") {
                         setOrbState("speaking");
+                        // Watchdog: force-reset if TTS stalls
+                        ttsWatchdogRef.current = setTimeout(() => {
+                            stopEdgeTTS();
+                            resetResponseState();
+                            setOrbState("listening");
+                        }, 30000);
                         void speakEdgeTTS(textToSpeak, () => {
                             resetResponseState();
                             setOrbState("listening");
@@ -282,6 +322,11 @@ export function useVoiceSession() {
                     } else if (currentTtsProvider === "yandex") {
                         // Yandex SpeechKit: fetch from /api/tts-yandex, play via blob
                         setOrbState("speaking");
+                        // Watchdog for Yandex TTS
+                        ttsWatchdogRef.current = setTimeout(() => {
+                            resetResponseState();
+                            setOrbState("listening");
+                        }, 30000);
                         void (async () => {
                             try {
                                 const res = await fetch("/api/tts-yandex", {
@@ -324,7 +369,6 @@ export function useVoiceSession() {
                             browserTtsWatchdogRef.current = setTimeout(() => {
                                 window.speechSynthesis.cancel();
                                 resetResponseState();
-                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                                 browserTtsWatchdogRef.current = null;
                             }, watchdogMs);
@@ -339,7 +383,6 @@ export function useVoiceSession() {
                                     browserTtsKeepAliveRef.current = null;
                                 }
                                 resetResponseState();
-                                clientRef.current?.unmuteMic();
                                 setOrbState("listening");
                             };
 
@@ -478,6 +521,20 @@ export function useVoiceSession() {
                 // Vault read failed silently
             }
 
+            // Load saved behavior rules (injected at TOP of prompt via setBehaviorRules)
+            let savedBehaviorRules = "";
+            try {
+                const prefRes = await fetch(`/api/preferences?userId=${encodeURIComponent(userId)}`);
+                if (prefRes.ok) {
+                    const prefData = (await prefRes.json()) as { rules: string[] };
+                    if (prefData.rules.length > 0) {
+                        savedBehaviorRules = prefData.rules.map((r, i) => `${i + 1}. ${r}`).join("\n");
+                    }
+                }
+            } catch {
+                // Silent
+            }
+
             // Warm up speechSynthesis during active user gesture (required by Chrome)
             if ("speechSynthesis" in window) {
                 const warmup = new SpeechSynthesisUtterance(" ");
@@ -487,6 +544,9 @@ export function useVoiceSession() {
             }
 
             await client.start(voiceContext, useEdge);
+            if (savedBehaviorRules) {
+                client.setBehaviorRules(savedBehaviorRules);
+            }
             setIsVoiceActive(true);
 
             // Start Web Speech API for real-time transcription display
