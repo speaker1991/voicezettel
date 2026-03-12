@@ -241,7 +241,7 @@ export function SettingsPanel({
                             <div className="divide-y divide-white/5">
                                 <div className="flex items-center justify-between py-2">
                                     <span className="text-sm text-zinc-300">
-                                        Провайдер
+                                        Мозги
                                     </span>
                                     <div className="flex items-center gap-2">
                                         <button
@@ -253,7 +253,7 @@ export function SettingsPanel({
                                             onClick={() => {
                                                 settings.setAiProvider("openai");
                                                 useNotificationStore.getState().addNotification(
-                                                    "Провайдер: OpenAI — применится к следующему сообщению",
+                                                    "Мозги: OpenAI — применится к следующему сообщению",
                                                     "info",
                                                 );
                                             }}
@@ -269,7 +269,7 @@ export function SettingsPanel({
                                             onClick={() => {
                                                 settings.setAiProvider("deepseek");
                                                 useNotificationStore.getState().addNotification(
-                                                    "Провайдер: DeepSeek — применится к следующему сообщению",
+                                                    "Мозги: DeepSeek — применится к следующему сообщению",
                                                     "info",
                                                 );
                                             }}
@@ -285,7 +285,7 @@ export function SettingsPanel({
                                             onClick={() => {
                                                 settings.setAiProvider("google");
                                                 useNotificationStore.getState().addNotification(
-                                                    "Провайдер: Gemini — применится к следующему сообщению",
+                                                    "Мозги: Gemini — применится к следующему сообщению",
                                                     "info",
                                                 );
                                             }}
@@ -302,9 +302,25 @@ export function SettingsPanel({
                                 {settings.aiVoiceEnabled && (
                                     <div className="flex items-center justify-between py-2">
                                         <span className="text-sm text-zinc-300">
-                                            TTS движок
+                                            Озвучка
                                         </span>
                                         <div className="flex items-center gap-2">
+                                            <button
+                                                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.ttsProvider ===
+                                                    "openai"
+                                                    ? "bg-violet-600 text-white"
+                                                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                                    }`}
+                                                onClick={() => {
+                                                    settings.setTtsProvider("openai");
+                                                    useNotificationStore.getState().addNotification(
+                                                        "Озвучка: OpenAI — перезапустите сессию",
+                                                        "info",
+                                                    );
+                                                }}
+                                            >
+                                                OpenAI
+                                            </button>
                                             <button
                                                 className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.ttsProvider ===
                                                     "browser"
@@ -314,7 +330,7 @@ export function SettingsPanel({
                                                 onClick={() => {
                                                     settings.setTtsProvider("browser");
                                                     useNotificationStore.getState().addNotification(
-                                                        "TTS: Браузер — применится к следующему ответу",
+                                                        "Озвучка: Браузер — применится к следующему ответу",
                                                         "info",
                                                     );
                                                 }}

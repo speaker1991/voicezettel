@@ -25,6 +25,12 @@ const PRICING: Record<string, ModelPricing> = {
         audioIn: 10.0,
         audioOut: 20.0,
     },
+    "gpt-realtime-1.5": {
+        textIn: 0.6,
+        textOut: 2.4,
+        audioIn: 10.0,
+        audioOut: 20.0,
+    },
     // DeepSeek V3 (works without VPN)
     "deepseek-chat": { textIn: 0.14, textOut: 0.28, audioIn: 0, audioOut: 0 },
     // Gemini free tier

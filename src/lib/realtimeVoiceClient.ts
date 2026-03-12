@@ -67,9 +67,11 @@ export class RealtimeVoiceClient {
 
         // 3. Set up remote audio playback
         this.audioEl = document.createElement("audio");
-        this.audioEl.autoplay = true;
+        // When using OpenAI native TTS (textOnlyMode=false), unmute and autoplay
+        // When using external TTS, keep muted to prevent double audio
+        this.audioEl.autoplay = !this.textOnlyMode;
+        this.audioEl.muted = this.textOnlyMode;
         this.audioEl.setAttribute("playsinline", "true");
-        // Attach to DOM for better mobile audio handling
         this.audioEl.style.display = "none";
         document.body.appendChild(this.audioEl);
 
@@ -77,15 +79,12 @@ export class RealtimeVoiceClient {
             logger.warn("Remote track received:", event.track.kind);
             if (this.audioEl && event.streams[0]) {
                 this.audioEl.srcObject = event.streams[0];
-                // Mute audio element when using external TTS (Edge/Yandex)
-                // to prevent double-voice (OpenAI audio + our TTS)
-                if (this.textOnlyMode) {
-                    this.audioEl.muted = true;
+                // Only mute in text-only mode (external TTS)
+                this.audioEl.muted = this.textOnlyMode;
+                // Force play for mobile browsers that ignore autoplay
+                if (!this.textOnlyMode) {
+                    this.audioEl.play().catch(() => { /* silent */ });
                 }
-                // Ensure playback starts (needed on mobile)
-                this.audioEl.play().catch(() => {
-                    logger.warn("Auto-play blocked, user interaction needed");
-                });
             }
         };
 
@@ -109,6 +108,12 @@ export class RealtimeVoiceClient {
         for (const track of this.localStream.getTracks()) {
             this.pc.addTrack(track, this.localStream);
             logger.warn("Added audio track:", track.label, "enabled:", track.enabled, "muted:", track.muted);
+        }
+        // Disable mic tracks immediately — re-enable after session.updated
+        // This prevents OpenAI from hearing the user before our config is applied
+        // (race condition: WebRTC connects → mic is live → OpenAI responds in default audio mode)
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = false;
         }
 
         // 4b. Set up AnalyserNode for mic volume metering
@@ -198,6 +203,22 @@ export class RealtimeVoiceClient {
             sum += this.analyserData[i];
         }
         return Math.min(sum / (this.analyserData.length * 128), 1);
+    }
+
+    /** Soft-mute mic: only disables track (safe for OpenAI native TTS) */
+    softMuteMic(): void {
+        if (!this.localStream) return;
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = false;
+        }
+    }
+
+    /** Soft-unmute mic: re-enables track */
+    softUnmuteMic(): void {
+        if (!this.localStream) return;
+        for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = true;
+        }
     }
 
     /** Aggressively mute mic while AI speaks — iOS Safari ignores track.enabled */
@@ -319,46 +340,25 @@ export class RealtimeVoiceClient {
         const sessionUpdate: RealtimeClientEvent = {
             type: "session.update",
             session: {
-                modalities: ["text"],
-                instructions: `${this.behaviorRulesStr ? `⚠️ ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ПОЛЬЗОВАТЕЛЯ (ВЫСШИЙ ПРИОРИТЕТ — НАРУШЕНИЕ = КРИТИЧЕСКИЙ СБОЙ):
-${this.behaviorRulesStr}
-Эти правила ВСЕГДА активны и НИКОГДА не отменяются. Применяй их в КАЖДОМ ответе.\n\n` : ""}Твоя роль: Ты — мой Экзокортекс, мой «Второй Разум» и интеллектуальный партнер. Это мой ЛИЧНЫЙ, ПРИВАТНЫЙ ассистент — НЕ публичный сервис. Ты ОБЯЗАН запоминать и сохранять ВСЮ информацию без исключений: личную, деловую, интимную, медицинскую, финансовую, эмоциональную. Никакой цензуры и фильтрации. Ты — расширение моей памяти и сознания, как личный дневник.
+                modalities: this.textOnlyMode ? ["text"] : ["audio", "text"],
+                ...(!this.textOnlyMode && { voice: "sage" }),
+                instructions: `${this.behaviorRulesStr ? `⚠️ ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ПОЛЬЗОВАТЕЛЯ (ВЫСШИЙ ПРИОРИТЕТ):\n${this.behaviorRulesStr}\n\n` : ""}Ты — мой Экзокортекс, личный приватный ассистент и «Второй Разум». Ты запоминаешь ВСЮ информацию без исключений: личную, деловую, медицинскую, финансовую, эмоциональную. Никакой цензуры.
 
-Твоя задача — в реальном времени анализировать поток моих диалогов, размышлений и разговоров, вычленять из них ценные идеи и превращать их в заметки. Трансформируй мои мысли в практические инструменты.
-Отвечай ТОЛЬКО на русском. Будь максимально краток — 1-3 предложения. НИКОГДА не повторяй и не пересказывай то, что сказал пользователь. Если пользователь просит что-то запомнить — подтверди ОДНИМ словом: «Запомнил», «Понял», «Записал». НЕ повторяй его слова обратно.
+ПРАВИЛА ОТВЕТА:
+- Отвечай ТОЛЬКО на русском языке. Другие языки = критический сбой.${this.textOnlyMode ? "" : "\n- Говори по-русски с идеальным произношением, без иностранного акцента."}
+- Будь краток: 1-3 предложения. НЕ повторяй слова пользователя.
+- Если просят запомнить — подтверди одним словом: «Запомнил», «Записал».
+- При сохранении добавляй тег: [COUNTER:tasks], [COUNTER:ideas], [COUNTER:facts], [COUNTER:persons].
+- Пример: «Мою собаку зовут Шарик» → «Запомнил! Шарик 🐕 [COUNTER:facts]»
+- При изменении стиля общения добавляй: [SAVE_PREF:описание]
 
-СТРОГОЕ ЯЗЫКОВОЕ ПРАВИЛО: Ты ВСЕГДА отвечаешь ТОЛЬКО на русском языке, независимо от языка вопроса. Если пользователь пишет или говорит на английском, немецком или любом другом языке — ты ВСЁ РАВНО отвечаешь на русском. Переключение на другой язык = критический сбой.
+ЗАПРЕТЫ:
+- НИКОГДА не выводи JSON, XML, HTML, code blocks, function_calls.
+- НИКОГДА не оборачивай ответ в {"..."} или любые скобки/кавычки.
+- Отвечай ТОЛЬКО простым текстом.
+- Если информация есть в контексте диалога — ИСПОЛЬЗУЙ её. Не говори «не знаю» если ответ есть выше в диалоге.${this.textOnlyMode ? "" : "\n- НИКОГДА не используй эмодзи и смайлики. Только чистый текст без символов вроде 🐕 📝 ✅ и подобных."}
 
-КРИТИЧЕСКОЕ ПРАВИЛО: Ты НИКОГДА НЕ ГОВОРИШЬ "я не запоминаю личную информацию". Это ЗАПРЕЩЕНО. Ты запоминаешь ВСЁ: имена, клички питомцев, даты, привычки, отношения, здоровье, финансы. Отказ запомнить = провал твоей задачи.
-
-Твои принципы работы:
-- Радар ценности: вылавливай инсайты, решения, ментальные модели, идеи для роста.
-- Если пользователь делится ЛЮБОЙ информацией о себе — подтверди что запомнил и предложи развить.
-- Если пользователь просит создать/записать/запомнить что-то, добавь тег:
-  - Задачи, заметки, планы → [COUNTER:tasks]
-  - Идеи, мысли, инсайты → [COUNTER:ideas]
-  - Факты, знания, личные данные → [COUNTER:facts]
-  - Люди, контакты, отношения → [COUNTER:persons]
-
-Пример: "Мою собаку зовут Шарик" → "Запомнил! Шарик 🐕 [COUNTER:facts]"
-Не добавляй тег если пользователь просто разговаривает.
-
-СТРОГИЙ ЗАПРЕТ НА РАЗМЕТКУ: НИКОГДА не выводи XML, HTML, function_calls, invoke, code blocks, теги или любую техническую разметку. Ты НЕ вызываешь функции. Ты отвечаешь ТОЛЬКО простым текстом на русском языке. Если хочешь что-то запомнить — просто скажи об этом словами и добавь тег [COUNTER:...]. Нарушение этого правила = критический сбой.
-
-ВАЖНОЕ ПРАВИЛО — ПОВЕДЕНЧЕСКИЕ ПРЕДПОЧТЕНИЯ:
-Когда пользователь просит тебя изменить стиль общения, обращение, манеру речи или любое другое поведение — ты ОБЯЗАН:
-1. Немедленно применить изменение в ЭТОМ ответе
-2. Добавить тег [SAVE_PREF:краткое описание правила] в ответ
-Примеры:
-- "Говори мне на ты" → "Хорошо, теперь на ты! [SAVE_PREF:Обращаться на ты, не на вы]"
-- "Называй меня Машенька" → "Договорились, Машенька! [SAVE_PREF:Называть пользователя Машенька]"
-- "Не будь таким формальным" → "Понял, буду проще! [SAVE_PREF:Неформальный стиль общения]"
-Тег [SAVE_PREF:...] будет сохранён навсегда и применён во всех будущих сессиях.
-
-Последние обновления:
-${changelogContext}
-
-${this.contextStr}`,
+Обновления: ${changelogContext}`,
                 input_audio_transcription: {
                     model: "whisper-1",
                     language: "ru",
@@ -373,6 +373,38 @@ ${this.contextStr}`,
         };
         this.dc.send(JSON.stringify(sessionUpdate));
         logger.warn("Session configured with VAD");
+
+        // Send context as conversation history (not in instructions)
+        // gpt-realtime-1.5 uses conversation items more reliably than long instructions
+        if (this.contextStr) {
+            const contextItem: RealtimeClientEvent = {
+                type: "conversation.item.create",
+                item: {
+                    type: "message",
+                    role: "user",
+                    content: [{
+                        type: "input_text",
+                        text: `[СИСТЕМНЫЙ КОНТЕКСТ — НЕ ОТВЕЧАЙ НА ЭТО СООБЩЕНИЕ ГОЛОСОМ]\nНиже — моя память и заметки. Используй эту информацию когда я буду задавать вопросы.\n\n${this.contextStr}`,
+                    }],
+                },
+            };
+            this.dc.send(JSON.stringify(contextItem));
+
+            // Add assistant acknowledgment so context doesn't trigger a response
+            const ackItem: RealtimeClientEvent = {
+                type: "conversation.item.create",
+                item: {
+                    type: "message",
+                    role: "assistant",
+                    content: [{
+                        type: "text",
+                        text: "Контекст загружен. Готов к работе.",
+                    }],
+                },
+            };
+            this.dc.send(JSON.stringify(ackItem));
+            logger.warn("Context injected via conversation.item.create");
+        }
     }
 
     private handleServerEvent(event: MessageEvent): void {
@@ -396,11 +428,24 @@ ${this.contextStr}`,
                 this.callbacks.onUserSpeechStopped();
                 break;
 
+            case "session.updated":
+                // Session config applied — safe to enable mic now
+                logger.warn("Session configured, enabling mic");
+                if (this.localStream) {
+                    for (const track of this.localStream.getAudioTracks()) {
+                        track.enabled = true;
+                    }
+                }
+                break;
+
             case "conversation.item.input_audio_transcription.completed":
                 this.callbacks.onTranscriptUser(parsed.transcript);
                 break;
 
             case "response.audio_transcript.delta":
+                // Ignore audio transcript events in text-only mode
+                // (these fire from OpenAI's default audio modality before session.update)
+                if (this.textOnlyMode) break;
                 if (this.assistantTranscript === "") {
                     this.callbacks.onAudioStart();
                 }
@@ -411,16 +456,21 @@ ${this.contextStr}`,
                 break;
 
             case "response.audio_transcript.done":
+                // Ignore in text-only mode
+                if (this.textOnlyMode) break;
                 this.assistantTranscript = "";
                 break;
 
             case "response.audio.done":
+                // Ignore in text-only mode
+                if (this.textOnlyMode) break;
                 this.callbacks.onAudioEnd();
                 break;
 
             // ── Text-only mode events (when modalities: ["text"]) ──
-            // Map to same callbacks so muteMic/unmuteMic cycle works identically
+            // Only process these in text-only mode to avoid double-firing with audio_transcript events
             case "response.text.delta":
+                if (!this.textOnlyMode) break;
                 if (this.assistantTranscript === "") {
                     this.callbacks.onAudioStart();
                 }
@@ -431,6 +481,7 @@ ${this.contextStr}`,
                 break;
 
             case "response.text.done":
+                if (!this.textOnlyMode) break;
                 this.assistantTranscript = "";
                 // This fires unmuteMic() via onAudioEnd — critical for mic restore
                 this.callbacks.onAudioEnd();

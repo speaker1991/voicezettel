@@ -352,5 +352,159 @@
     "context": {
       "ttsProvider": "yandex"
     }
+  },
+  {
+    "id": "a8ac6dbf-e27a-4f2f-84e1-4d7f8155a584",
+    "timestamp": "2026-03-11T19:28:37.177Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "da517006-b193-4232-808d-e1ecbd25ffa6",
+    "timestamp": "2026-03-11T19:28:49.410Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "a610b8db-77ff-4f73-95d6-9037c87d56ab",
+    "timestamp": "2026-03-11T19:41:49.931Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "dcd06f94-1b3a-4d93-9e34-31835624e364",
+    "timestamp": "2026-03-11T19:44:09.761Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "f2f49fcc-db61-4007-83f4-38d958815db2",
+    "timestamp": "2026-03-11T19:54:33.507Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "ccafd1db-6eb6-4f0a-821d-ce79b796fc8b",
+    "timestamp": "2026-03-11T20:05:37.608Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "7f3c94db-08fb-47d8-9f9e-b0a651044afe",
+    "timestamp": "2026-03-11T20:22:21.856Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "02678dae-584d-4c04-8bf7-47a81b08f92c",
+    "timestamp": "2026-03-11T21:55:07.145Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "81f4ec0c-c19c-4efe-83dc-5addcd136f84",
+    "timestamp": "2026-03-11T22:17:33.769Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "020482d7-c7ab-4739-8eeb-9fe9249231e8",
+    "timestamp": "2026-03-11T22:19:18.334Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "3a331c2a-1012-400a-be0d-244fd0b52065",
+    "timestamp": "2026-03-11T22:20:03.237Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "f66e6d47-fc80-4bdc-aafa-e6e69cae00b6",
+    "timestamp": "2026-03-11T22:21:20.853Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "de54a704-ff79-483d-9f67-810ace13322d",
+    "timestamp": "2026-03-11T22:38:17.135Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
+  },
+  {
+    "id": "c0a5af48-baf1-403a-8940-979de7abac5f",
+    "timestamp": "2026-03-11T22:41:11.137Z",
+    "userId": "evsinanton@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "edge"
+    }
   }
 ]

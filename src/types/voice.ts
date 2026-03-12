@@ -24,9 +24,9 @@ export type RealtimeClientEvent =
         type: "conversation.item.create";
         item: {
             type: "message";
-            role: "user";
+            role: "user" | "assistant";
             content: Array<{
-                type: "input_text";
+                type: "input_text" | "text";
                 text: string;
             }>;
         };
@@ -47,6 +47,7 @@ export type RealtimeClientEvent =
         type: "session.update";
         session: {
             modalities?: string[];
+            voice?: string;
             instructions?: string;
             input_audio_transcription?: {
                 model: string;

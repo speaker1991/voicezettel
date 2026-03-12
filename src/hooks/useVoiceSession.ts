@@ -39,11 +39,8 @@ export function useVoiceSession() {
     // Edge TTS (only used when ttsProvider === "edge")
     const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
 
-    // Web Speech API for real-time transcription display
+    // Web Speech API for real-time character-by-character transcription
     const { start: startRecognition, stop: stopRecognition } = useSpeechRecognition();
-
-    // Pre-warmed microphone stream for instant startup
-    const preWarmedStreamRef = useRef<MediaStream | null>(null);
 
     // Track the current AI response cycle
     const isAssistantResponding = useRef(false);
@@ -51,6 +48,7 @@ export function useVoiceSession() {
     const userTranscriptReceived = useRef(false);
     const lastAssistantText = useRef("");
     const edgeTtsMessageShown = useRef(false);
+    const pendingUserMsgId = useRef<string | null>(null); // placeholder user message ID
     const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const audioLevelRafRef = useRef<number | null>(null);
@@ -63,9 +61,13 @@ export function useVoiceSession() {
     const resetResponseState = useCallback(() => {
         isAssistantResponding.current = false;
         isServerResponseActive.current = false;
+        // Unmute mic after TTS finished (echo prevention)
+        clientRef.current?.unmuteMic();
+        clientRef.current?.softUnmuteMic();
         userTranscriptReceived.current = false;
         lastAssistantText.current = "";
         edgeTtsMessageShown.current = false;
+        pendingUserMsgId.current = null;
         if (ttsWatchdogRef.current) {
             clearTimeout(ttsWatchdogRef.current);
             ttsWatchdogRef.current = null;
@@ -90,7 +92,6 @@ export function useVoiceSession() {
             window.speechSynthesis.cancel();
         }
         resetResponseState();
-        // Stop speech recognition
         stopRecognition();
         setLiveTranscript("");
         // Stop audio level metering
@@ -110,34 +111,7 @@ export function useVoiceSession() {
         setOrbState("idle");
         setModality("text");
     }, [setOrbState, setModality, stopEdgeTTS, resetResponseState, setAudioLevel, setLiveTranscript]);
-    // Pre-warm microphone: capture stream early so tapping the orb starts instantly
-    useEffect(() => {
-        if (!navigator.mediaDevices?.getUserMedia) return;
-        navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-            },
-        }).then((stream) => {
-            // Only cache if no voice session is already active
-            if (!clientRef.current) {
-                preWarmedStreamRef.current = stream;
-            } else {
-                // Voice session already started — release this stream
-                for (const track of stream.getTracks()) track.stop();
-            }
-        }).catch(() => {
-            // Permission denied or unavailable — will retry at session start
-        });
-        return () => {
-            // Release pre-warmed stream on unmount if not used
-            if (preWarmedStreamRef.current) {
-                for (const track of preWarmedStreamRef.current.getTracks()) track.stop();
-                preWarmedStreamRef.current = null;
-            }
-        };
-    }, []);
+
 
     // Hot-swap TTS provider: interrupt active TTS when provider changes mid-session
     useEffect(() => {
@@ -162,6 +136,15 @@ export function useVoiceSession() {
                     resetResponseState();
                     setOrbState("listening");
                 }
+                // Warm up speechSynthesis when switching to browser TTS
+                // (mobile requires user gesture to unlock speechSynthesis)
+                const newProvider = useSettingsStore.getState().ttsProvider;
+                if (newProvider === "browser" && "speechSynthesis" in window) {
+                    const warmup = new SpeechSynthesisUtterance(" ");
+                    warmup.volume = 0;
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.speak(warmup);
+                }
             },
         );
         return () => unsub();
@@ -171,8 +154,8 @@ export function useVoiceSession() {
         if (clientRef.current) return;
 
         const ttsProvider = useSettingsStore.getState().ttsProvider;
-        // All TTS providers (browser/edge/yandex) are external — always mute OpenAI audio
-        const useEdge = true;
+        // OpenAI TTS = use native audio (muteAudio=false), all others = external TTS (muteAudio=true)
+        const useExternalTts = ttsProvider !== "openai";
 
         setModality("voice");
         setOrbState("listening"); // Show listening while connecting
@@ -204,29 +187,31 @@ export function useVoiceSession() {
             },
 
             onTranscriptUser: (text: string) => {
-                // Ignore echo transcriptions during TTS playback
-                const currentOrbState = useChatStore.getState().orbState;
-                if (currentOrbState === "speaking") return;
-
-                // Mark that we received a user transcript for this cycle
+                // Whisper finished — update the placeholder with accurate text
                 userTranscriptReceived.current = true;
 
-                // Clear live transcript since final text arrived
-                setLiveTranscript("");
-
-                addMessage({
-                    id: crypto.randomUUID(),
-                    role: "user" as const,
-                    content: text,
-                    timestamp: new Date().toISOString(),
-                    source: "voice" as const,
-                });
+                if (pendingUserMsgId.current) {
+                    useChatStore.getState().updateMessageById(
+                        pendingUserMsgId.current,
+                        { content: text },
+                    );
+                    // Don't clear pendingUserMsgId here — Whisper may fire multiple
+                    // times. It gets cleared in resetResponseState() at end of cycle.
+                } else {
+                    // Fallback: no placeholder (shouldn't happen), add directly
+                    addMessage({
+                        id: crypto.randomUUID(),
+                        role: "user" as const,
+                        content: text,
+                        timestamp: new Date().toISOString(),
+                        source: "voice" as const,
+                    });
+                }
             },
 
             onTranscriptAssistant: (accumulated: string) => {
                 lastAssistantText.current = accumulated;
                 isAssistantResponding.current = true;
-                // Update message only if it's already been added to chat
                 if (edgeTtsMessageShown.current) {
                     updateLastAssistantMessage({ content: accumulated });
                 }
@@ -235,18 +220,21 @@ export function useVoiceSession() {
             onAudioStart: () => {
                 isServerResponseActive.current = true;
                 setOrbState("speaking");
+                // Soft-mute mic to prevent echo (model hearing itself)
+                clientRef.current?.softMuteMic();
             },
 
             onUserSpeechStarted: () => {
                 setOrbState("listening");
 
-                // Barge-in: if the assistant is currently speaking — stop it
+                // Barge-in — only for external TTS
+                // OpenAI native TTS handles interruptions via WebRTC natively
+                const currentTts = useSettingsStore.getState().ttsProvider;
+                if (currentTts === "openai") return;
+
                 if (isAssistantResponding.current) {
-                    // 1. Stop all TTS providers
                     stopEdgeTTS();
-                    if ("speechSynthesis" in window) {
-                        window.speechSynthesis.cancel();
-                    }
+                    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
                     if (browserTtsWatchdogRef.current) {
                         clearTimeout(browserTtsWatchdogRef.current);
                         browserTtsWatchdogRef.current = null;
@@ -255,18 +243,34 @@ export function useVoiceSession() {
                         clearInterval(browserTtsKeepAliveRef.current);
                         browserTtsKeepAliveRef.current = null;
                     }
-                    // 2. Cancel the current response on OpenAI Realtime API
-                    //    (only if server is still streaming — avoid errors on completed responses)
                     if (isServerResponseActive.current) {
                         clientRef.current?.cancelCurrentResponse();
                     }
-                    // 3. Reset response cycle state
                     resetResponseState();
                 }
             },
 
             onUserSpeechStopped: () => {
                 setOrbState("thinking");
+
+                // Grab SpeechRecognition text before clearing the bubble
+                const currentText = useChatStore.getState().liveTranscript || "...";
+                setLiveTranscript(""); // hide bubble
+
+                // Create user message immediately with SpeechRecognition text
+                // → bubble disappears but SAME text appears as chat message (no jump)
+                // → message is created BEFORE GPT responds (correct order)
+                if (!pendingUserMsgId.current) {
+                    const id = crypto.randomUUID();
+                    pendingUserMsgId.current = id;
+                    addMessage({
+                        id,
+                        role: "user" as const,
+                        content: currentText,
+                        timestamp: new Date().toISOString(),
+                        source: "voice" as const,
+                    });
+                }
             },
 
             onAudioEnd: () => {
@@ -312,7 +316,12 @@ export function useVoiceSession() {
                 let cleanText = savedText;
                 if (counterType) cleanText = stripCounterTag(cleanText);
                 cleanText = stripPrefTag(cleanText);
-
+                // Strip JSON wrappers that gpt-realtime-1.5 adds: {"text"} or {"text}
+                cleanText = cleanText.replace(/^\{["']?\s*/, "").replace(/\s*["']?\}$/, "");
+                // Strip leading/trailing quotes
+                cleanText = cleanText.replace(/^["']+|["']+$/g, "");
+                // Clean literal \n artifacts and trim whitespace
+                cleanText = cleanText.replace(/\\n/g, "\n").trim();
                 const aiText = cleanText;
 
                 // ── TTS: speak the response ──
@@ -337,6 +346,20 @@ export function useVoiceSession() {
 
                     // Launch TTS by current provider
                     const currentTtsProvider = useSettingsStore.getState().ttsProvider;
+
+                    if (currentTtsProvider === "openai") {
+                        // OpenAI native TTS — audio plays from audioEl automatically
+                        // response.audio.done = audio finished → reset to listening
+                        setOrbState("speaking");
+                        // Small delay to let audioEl buffer finish playing
+                        setTimeout(() => {
+                            resetResponseState();
+                            setOrbState("listening");
+                        }, 500);
+                    } else {
+                        // External TTS — mute mic to prevent echo
+                        clientRef.current?.muteMic();
+                    }
 
                     if (currentTtsProvider === "edge") {
                         setOrbState("speaking");
@@ -390,37 +413,67 @@ export function useVoiceSession() {
                             setOrbState("speaking");
                             window.speechSynthesis.cancel();
 
-                            const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                            utterance.lang = "ru-RU";
-                            utterance.rate = 1.0;
-                            utterance.pitch = 1.0;
+                            const doSpeak = () => {
+                                const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                                utterance.lang = "ru-RU";
+                                utterance.rate = 1.0;
+                                utterance.pitch = 1.0;
 
-                            // Watchdog: force-unmute if onend doesn't fire
-                            const watchdogMs = Math.max(5000, textToSpeak.length * 100);
-                            browserTtsWatchdogRef.current = setTimeout(() => {
-                                window.speechSynthesis.cancel();
-                                resetResponseState();
-                                setOrbState("listening");
-                                browserTtsWatchdogRef.current = null;
-                            }, watchdogMs);
+                                // Try to find a Russian voice explicitly
+                                const voices = window.speechSynthesis.getVoices();
+                                const ruVoice = voices.find((v) => v.lang.startsWith("ru"));
+                                if (ruVoice) {
+                                    utterance.voice = ruVoice;
+                                }
 
-                            const cleanup = () => {
-                                if (browserTtsWatchdogRef.current) {
-                                    clearTimeout(browserTtsWatchdogRef.current);
+                                // Watchdog: force-reset if onend doesn't fire
+                                const watchdogMs = Math.max(5000, textToSpeak.length * 100);
+                                browserTtsWatchdogRef.current = setTimeout(() => {
+                                    window.speechSynthesis.cancel();
+                                    resetResponseState();
+                                    setOrbState("listening");
                                     browserTtsWatchdogRef.current = null;
-                                }
-                                if (browserTtsKeepAliveRef.current) {
-                                    clearInterval(browserTtsKeepAliveRef.current);
-                                    browserTtsKeepAliveRef.current = null;
-                                }
-                                resetResponseState();
-                                setOrbState("listening");
+                                }, watchdogMs);
+
+                                const cleanup = () => {
+                                    if (browserTtsWatchdogRef.current) {
+                                        clearTimeout(browserTtsWatchdogRef.current);
+                                        browserTtsWatchdogRef.current = null;
+                                    }
+                                    if (browserTtsKeepAliveRef.current) {
+                                        clearInterval(browserTtsKeepAliveRef.current);
+                                        browserTtsKeepAliveRef.current = null;
+                                    }
+                                    resetResponseState();
+                                    setOrbState("listening");
+                                };
+
+                                utterance.onend = cleanup;
+                                utterance.onerror = (e) => {
+                                    logger.warn("Browser TTS error:", e);
+                                    cleanup();
+                                };
+
+                                window.speechSynthesis.speak(utterance);
                             };
 
-                            utterance.onend = cleanup;
-                            utterance.onerror = cleanup;
-
-                            window.speechSynthesis.speak(utterance);
+                            // Voices may not be loaded yet — wait for them
+                            const voices = window.speechSynthesis.getVoices();
+                            if (voices.length === 0) {
+                                // Voices not loaded — wait for voiceschanged event
+                                const onVoicesReady = () => {
+                                    window.speechSynthesis.removeEventListener("voiceschanged", onVoicesReady);
+                                    doSpeak();
+                                };
+                                window.speechSynthesis.addEventListener("voiceschanged", onVoicesReady);
+                                // Fallback: if voiceschanged never fires, try anyway after 500ms
+                                setTimeout(() => {
+                                    window.speechSynthesis.removeEventListener("voiceschanged", onVoicesReady);
+                                    doSpeak();
+                                }, 500);
+                            } else {
+                                doSpeak();
+                            }
 
                             // Chrome bug workaround: speechSynthesis pauses after ~15s
                             browserTtsKeepAliveRef.current = setInterval(() => {
@@ -436,7 +489,6 @@ export function useVoiceSession() {
                             }, 10000);
                         } else {
                             resetResponseState();
-                            clientRef.current?.unmuteMic();
                             setOrbState("listening");
                         }
                     }
@@ -499,7 +551,7 @@ export function useVoiceSession() {
             onTokenUsage: (usage) => {
                 useCountersStore.getState().reportTokenUsage(
                     userId ?? "",
-                    "gpt-4o-mini-realtime-preview",
+                    "gpt-realtime-1.5",
                     usage.textIn,
                     usage.textOut,
                     usage.audioIn,
@@ -576,19 +628,16 @@ export function useVoiceSession() {
                 window.speechSynthesis.speak(warmup);
             }
 
-            await client.start(voiceContext, useEdge, preWarmedStreamRef.current ?? undefined);
-            // Clear pre-warmed stream ref (ownership transferred to client)
-            preWarmedStreamRef.current = null;
+            await client.start(voiceContext, useExternalTts);
             if (savedBehaviorRules) {
                 client.setBehaviorRules(savedBehaviorRules);
             }
             setIsVoiceActive(true);
 
-            // Start Web Speech API for real-time transcription display
+            // Start Web Speech API for real-time character-by-character transcription
             startRecognition();
-
             const rlog = createRemoteLogger(userId, "voice");
-            rlog.info("Voice session started", { ttsProvider: useEdge ? "edge" : useSettingsStore.getState().ttsProvider });
+            rlog.info("Voice session started", { ttsProvider: useExternalTts ? useSettingsStore.getState().ttsProvider : "openai" });
 
             // Start audio level metering loop for orb visualization
             const getTtsLevel = (): number => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const REALTIME_BASE_URL = "https://api.openai.com/v1/realtime";
-const REALTIME_MODEL = "gpt-4o-mini-realtime-preview-2024-12-17";
+const REALTIME_MODEL = "gpt-realtime-1.5";
 
 const SdpRequestSchema = z.object({
     sdp: z.string(),

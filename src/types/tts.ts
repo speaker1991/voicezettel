@@ -3,7 +3,7 @@ export interface TTSRequest {
     voice?: string;
 }
 
-export type TtsProvider = "browser" | "edge";
+export type TtsProvider = "browser" | "edge" | "openai";
 
 /** Available Russian Edge TTS voices */
 export const EDGE_VOICES = [

@@ -56,7 +56,7 @@ export function useSpeechRecognition() {
 
         recognition.onend = () => {
             // Do NOT auto-restart — on Android it causes system beep sounds.
-            // Recognition runs once per voice session with continuous: true.
+            // continuous: true keeps recognition alive during the voice session.
             isRunningRef.current = false;
             useChatStore.getState().setLiveTranscript("");
         };

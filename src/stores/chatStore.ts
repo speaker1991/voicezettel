@@ -16,6 +16,7 @@ interface ChatState {
 
 interface ChatActions {
     addMessage: (message: Message) => void;
+    updateMessageById: (id: string, partial: Partial<Message>) => void;
     updateLastAssistantMessage: (partial: Partial<Message>) => void;
     insertMessageBeforeLastAssistant: (message: Message) => void;
     setOrbState: (state: OrbState) => void;
@@ -49,6 +50,13 @@ export const useChatStore = create<ChatState & ChatActions>()(
 
             addMessage: (message) =>
                 set((state) => ({ messages: [...state.messages, message] })),
+
+            updateMessageById: (id, partial) =>
+                set((state) => ({
+                    messages: state.messages.map((m) =>
+                        m.id === id ? { ...m, ...partial } : m
+                    ),
+                })),
 
             updateLastAssistantMessage: (partial) =>
                 set((state) => {
