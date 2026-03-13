@@ -489,5 +489,78 @@
     "context": {
       "ttsProvider": "openai"
     }
+  },
+  {
+    "id": "9c958fba-f2f9-4d89-a020-e7bc64a2a6ce",
+    "timestamp": "2026-03-13T02:54:23.523Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "ERROR",
+    "source": "voice",
+    "message": "Session start failed: OpenAI API error: {\"error\":{\"code\":\"unsupported_country_region_territory\",\"message\":\"Country, region, or territory not supported\",\"param\":null,\"type\":\"request_forbidden\"}}"
+  },
+  {
+    "id": "7aadf2fd-7c81-441d-b58d-2a2137aa501c",
+    "timestamp": "2026-03-13T02:54:30.758Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "ERROR",
+    "source": "voice",
+    "message": "Session start failed: OpenAI API error: {\"error\":{\"code\":\"unsupported_country_region_territory\",\"message\":\"Country, region, or territory not supported\",\"param\":null,\"type\":\"request_forbidden\"}}"
+  },
+  {
+    "id": "7c454301-c9f2-412a-be07-23fa0cf1c556",
+    "timestamp": "2026-03-13T02:54:30.820Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "ERROR",
+    "source": "voice",
+    "message": "Session start failed: OpenAI API error: {\"error\":{\"code\":\"unsupported_country_region_territory\",\"message\":\"Country, region, or territory not supported\",\"param\":null,\"type\":\"request_forbidden\"}}"
+  },
+  {
+    "id": "2a6f1cc3-1f35-44db-8c03-a26dc83aab04",
+    "timestamp": "2026-03-13T02:58:16.679Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "ERROR",
+    "source": "voice",
+    "message": "Session start failed: OpenAI API error: {\"error\":{\"code\":\"unsupported_country_region_territory\",\"message\":\"Country, region, or territory not supported\",\"param\":null,\"type\":\"request_forbidden\"}}"
+  },
+  {
+    "id": "e6c20fbc-fe6a-4cdc-8857-10f9404b21f6",
+    "timestamp": "2026-03-13T02:58:34.717Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "ERROR",
+    "source": "voice",
+    "message": "Session start failed: OpenAI API error: {\"error\":{\"code\":\"unsupported_country_region_territory\",\"message\":\"Country, region, or territory not supported\",\"param\":null,\"type\":\"request_forbidden\"}}"
+  },
+  {
+    "id": "11af184f-cdc0-45a8-8a27-1c646cc1d9f7",
+    "timestamp": "2026-03-13T03:00:44.873Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "3f9ce3c6-4634-4ec2-8676-84e1599c29a5",
+    "timestamp": "2026-03-13T03:13:12.572Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "browser"
+    }
+  },
+  {
+    "id": "a662842f-c0e1-4b9c-8adb-023f5ff7c454",
+    "timestamp": "2026-03-13T03:13:56.618Z",
+    "userId": "nastyrudi777@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "browser"
+    }
   }
 ]

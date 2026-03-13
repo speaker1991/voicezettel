@@ -1,8 +1,10 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Copy, Check } from "lucide-react";
+import { X, Copy, Check, BookmarkPlus } from "lucide-react";
 import { useLavalierStore } from "@/stores/lavalierStore";
+import { useNotificationStore } from "@/stores/notificationStore";
+import { sendToObsidian } from "@/lib/obsidianClient";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { logger } from "@/lib/logger";
 
@@ -17,6 +19,7 @@ export function MeetingSummary() {
 
     const [visible, setVisible] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [savedToObsidian, setSavedToObsidian] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
 
     // Show modal when we have transcript but no summary yet
@@ -101,6 +104,30 @@ export function MeetingSummary() {
         setTimeout(() => setCopied(false), 2000);
     }, [summary]);
 
+    const handleSaveToObsidian = useCallback(async () => {
+        if (!summary) return;
+        try {
+            const now = new Date();
+            const dateStr = now.toISOString().split("T")[0];
+            const title = `Протокол встречи ${dateStr}`;
+            const content = `---\ntype: meeting\ntags: ["meeting", "protocol"]\ncreated: ${now.toISOString()}\n---\n\n${summary}`;
+
+            await sendToObsidian(
+                `Встреча ${dateStr} (${transcript.length} реплик)`,
+                content,
+            );
+            setSavedToObsidian(true);
+            useNotificationStore
+                .getState()
+                .addNotification("📓 Протокол сохранён в Obsidian", "info");
+        } catch (err) {
+            logger.error("Failed to save to Obsidian:", err);
+            useNotificationStore
+                .getState()
+                .addNotification("Ошибка сохранения в Obsidian", "error");
+        }
+    }, [summary, transcript.length]);
+
     const handleClose = useCallback(() => {
         abortRef.current?.abort();
         setVisible(false);
@@ -129,6 +156,19 @@ export function MeetingSummary() {
                                 📋 Протокол встречи
                             </h2>
                             <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleSaveToObsidian}
+                                    disabled={!summary || isGenerating || savedToObsidian}
+                                    className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-200 disabled:opacity-30"
+                                    title="Сохранить в Obsidian"
+                                >
+                                    {savedToObsidian ? (
+                                        <Check className="size-4 text-emerald-400" />
+                                    ) : (
+                                        <BookmarkPlus className="size-4" />
+                                    )}
+                                </button>
                                 <button
                                     type="button"
                                     onClick={handleCopy}

@@ -2,84 +2,98 @@
 
 import { useRef, useCallback, useState, useEffect } from "react";
 import {
-    RealtimeVoiceClient,
-    type VoiceClientCallbacks,
-} from "@/lib/realtimeVoiceClient";
+    LocalVoiceClient,
+    type LocalVoiceCallbacks,
+} from "@/lib/localVoiceClient";
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useAnimationStore } from "@/stores/animationStore";
 import { useCountersStore } from "@/stores/countersStore";
 import { useNotificationStore } from "@/stores/notificationStore";
-import { detectCounterType, stripCounterTag } from "@/lib/detectCounterType";
+import { detectCounterTypes, stripCounterTag } from "@/lib/detectCounterType";
 import { extractPreferences, stripPrefTag } from "@/lib/detectPreference";
 import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
-import { useEdgeTTS } from "@/hooks/useElevenLabsTTS";
 import { logger } from "@/lib/logger";
-import { createRemoteLogger } from "@/lib/remoteLogger";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { stripDSML } from "@/lib/stripDSML";
 
+/* ─── Types for sentence queue ─── */
+interface SentenceJob {
+    text: string;
+    blobPromise: Promise<Blob | null>;
+}
+
+/**
+ * Pre-fetch EdgeTTS audio for a sentence.
+ * Returns a Blob or null on failure. Does NOT play anything.
+ */
+async function prefetchEdgeTTS(text: string, voice: string): Promise<Blob | null> {
+    try {
+        // Strip emoji, counter tags, and markdown before TTS
+        const clean = text
+            .replace(/\[COUNTER:\w+\]/gi, "")
+            .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F000}-\u{1FFFF}]/gu, "")
+            .replace(/[*_#>`~]/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+        if (!clean || clean.length < 2) return null;
+        const res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: clean, voice }),
+        });
+        if (!res.ok) return null;
+        return await res.blob();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * useVoiceSession — Local STT (faster-whisper GPU) + any LLM + sentence-streaming EdgeTTS.
+ *
+ * Flow: Mic → WebSocket → faster-whisper → /api/chat (stream) → EdgeTTS per sentence
+ * GPT streams text; as soon as the first sentence ends (. ! ?) its audio is fetched.
+ * While sentence N plays, sentence N+1 is already being fetched in the background.
+ */
 export function useVoiceSession() {
-    const clientRef = useRef<RealtimeVoiceClient | null>(null);
+    const clientRef = useRef<LocalVoiceClient | null>(null);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
     const { userId } = useUser();
 
     const addMessage = useChatStore((s) => s.addMessage);
     const updateLastAssistantMessage = useChatStore(
-        (s) => s.updateLastAssistantMessage
-    );
-    const insertMessageBeforeLastAssistant = useChatStore(
-        (s) => s.insertMessageBeforeLastAssistant
+        (s) => s.updateLastAssistantMessage,
     );
     const setOrbState = useChatStore((s) => s.setOrbState);
     const setModality = useChatStore((s) => s.setModality);
     const setAudioLevel = useChatStore((s) => s.setAudioLevel);
     const setLiveTranscript = useChatStore((s) => s.setLiveTranscript);
 
-    // Edge TTS (only used when ttsProvider === "edge")
-    const { speak: speakEdgeTTS, stop: stopEdgeTTS } = useEdgeTTS();
-
-    // Web Speech API for real-time character-by-character transcription
-    const { start: startRecognition, stop: stopRecognition } = useSpeechRecognition();
-
-    // Track the current AI response cycle
-    const isAssistantResponding = useRef(false);
-    const isServerResponseActive = useRef(false); // true while OpenAI is streaming text, false after response.text.done
-    const userTranscriptReceived = useRef(false);
-    const lastAssistantText = useRef("");
-    const edgeTtsMessageShown = useRef(false);
-    const pendingUserMsgId = useRef<string | null>(null); // placeholder user message ID
-    const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const audioLevelRafRef = useRef<number | null>(null);
+    // Refs
+    const isProcessingRef = useRef(false);
+    const abortRef = useRef<AbortController | null>(null);
+    const edgeTtsAudioElRef = useRef<HTMLAudioElement | null>(null);
     const ttsAudioCtxRef = useRef<AudioContext | null>(null);
     const ttsAnalyserRef = useRef<AnalyserNode | null>(null);
     const ttsAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
-    const ttsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const audioLevelRafRef = useRef<number | null>(null);
+    const micAnalyserRef = useRef<AnalyserNode | null>(null);
+    const micAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // Single source of truth for resetting response cycle state
-    const resetResponseState = useCallback(() => {
-        isAssistantResponding.current = false;
-        isServerResponseActive.current = false;
-        // Unmute mic after TTS finished (echo prevention)
-        clientRef.current?.unmuteMic();
-        clientRef.current?.softUnmuteMic();
-        userTranscriptReceived.current = false;
-        lastAssistantText.current = "";
-        edgeTtsMessageShown.current = false;
-        pendingUserMsgId.current = null;
-        if (ttsWatchdogRef.current) {
-            clearTimeout(ttsWatchdogRef.current);
-            ttsWatchdogRef.current = null;
-        }
-    }, []);
+    const { start: startRecognition, stop: stopRecognition } = useSpeechRecognition();
 
-    const stopVoiceInternal = useCallback(() => {
-        if (clientRef.current) {
-            clientRef.current.stop();
-            clientRef.current = null;
+    // ── Cleanup TTS ──
+    const cleanupTTS = useCallback(() => {
+        const audioEl = edgeTtsAudioElRef.current;
+        if (audioEl) {
+            audioEl.pause();
+            audioEl.removeAttribute("src");
+            audioEl.load();
         }
-        stopEdgeTTS();
         if (browserTtsWatchdogRef.current) {
             clearTimeout(browserTtsWatchdogRef.current);
             browserTtsWatchdogRef.current = null;
@@ -91,55 +105,333 @@ export function useVoiceSession() {
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
         }
-        resetResponseState();
-        stopRecognition();
-        setLiveTranscript("");
-        // Stop audio level metering
-        if (audioLevelRafRef.current !== null) {
-            cancelAnimationFrame(audioLevelRafRef.current);
-            audioLevelRafRef.current = null;
-        }
-        setAudioLevel(0);
-        // Clean up TTS analyser
-        if (ttsAudioCtxRef.current) {
-            ttsAudioCtxRef.current.close().catch(() => { /* silent */ });
-            ttsAudioCtxRef.current = null;
-            ttsAnalyserRef.current = null;
-            ttsAnalyserDataRef.current = null;
-        }
-        setIsVoiceActive(false);
-        setOrbState("idle");
-        setModality("text");
-    }, [setOrbState, setModality, stopEdgeTTS, resetResponseState, setAudioLevel, setLiveTranscript]);
+    }, []);
 
+    // ── Stream GPT with sentence detection ──
+    const sendToChat = useCallback(async (
+        userText: string,
+        onSentence: (sentence: string) => void,
+    ): Promise<string> => {
+        const { aiProvider, systemPrompt } = useSettingsStore.getState();
+        const allMessages = useChatStore.getState().messages;
+        const history = allMessages.slice(-20).map((m) => ({
+            role: m.role,
+            content: m.content,
+        }));
 
-    // Hot-swap TTS provider: interrupt active TTS when provider changes mid-session
+        abortRef.current = new AbortController();
+
+        const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                messages: history,
+                provider: aiProvider,
+                systemPrompt,
+                userId,
+                source: "voice",
+            }),
+            signal: abortRef.current.signal,
+        });
+
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({
+                error: "Unknown error",
+            }));
+            throw new Error(
+                (errBody as { error?: string }).error ?? `HTTP ${res.status}`,
+            );
+        }
+        if (!res.body) throw new Error("No response body");
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let sentenceBuffer = "";
+        let streamModel = "";
+        let streamPromptTokens = 0;
+        let streamCompletionTokens = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split("\n");
+
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                const data = line.slice(6).trim();
+                if (data === "[DONE]") continue;
+
+                try {
+                    const parsed = JSON.parse(data) as {
+                        choices?: Array<{
+                            delta?: { content?: string };
+                        }>;
+                        model?: string;
+                        usage?: {
+                            prompt_tokens?: number;
+                            completion_tokens?: number;
+                        };
+                    };
+
+                    if (parsed.model && !streamModel) {
+                        streamModel = parsed.model;
+                    }
+                    if (parsed.usage) {
+                        streamPromptTokens = parsed.usage.prompt_tokens ?? 0;
+                        streamCompletionTokens = parsed.usage.completion_tokens ?? 0;
+                    }
+
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                        accumulated += content;
+                        sentenceBuffer += content;
+                        // Strip DSML in real-time so chat bubble never shows tags
+                        updateLastAssistantMessage({ content: stripDSML(accumulated) });
+
+                        // Detect sentence boundaries: .!?… followed by space or newline
+                        const sentenceEnd = /[.!?…]+[\s\n]+/;
+                        let match = sentenceEnd.exec(sentenceBuffer);
+                        while (match) {
+                            const idx = match.index + match[0].length;
+                            const sentence = sentenceBuffer.slice(0, idx).trim();
+                            if (sentence.length > 5) {
+                                onSentence(sentence);
+                            }
+                            sentenceBuffer = sentenceBuffer.slice(idx);
+                            match = sentenceEnd.exec(sentenceBuffer);
+                        }
+                    }
+                } catch {
+                    // skip
+                }
+            }
+        }
+
+        // Flush remaining text as final sentence
+        const remaining = sentenceBuffer.trim();
+        if (remaining.length > 2) {
+            onSentence(remaining);
+        }
+
+        // Report token usage
+        if (streamPromptTokens > 0 || streamCompletionTokens > 0) {
+            const reportModel = streamModel || "gpt-4o-mini";
+            useCountersStore.getState().reportTokenUsage(
+                userId ?? "",
+                reportModel,
+                streamPromptTokens,
+                streamCompletionTokens,
+            ).catch(() => { /* silent */ });
+        }
+
+        abortRef.current = null;
+        return accumulated;
+    }, [userId, updateLastAssistantMessage]);
+
+    // ── Clean response text ──
+    const cleanResponse = useCallback((raw: string): string => {
+        let text = stripDSML(raw);
+        const counterTypes = detectCounterTypes(text);
+        if (counterTypes.length > 0) text = stripCounterTag(text);
+        text = stripPrefTag(text);
+        text = text.replace(/^\{["']?\s*/, "").replace(/\s*["']?\}$/, "");
+        text = text.replace(/^["']+|["']+$/g, "");
+        text = text.replace(/\\n/g, "\n").trim();
+        return text;
+    }, []);
+
+    // ── Play a single audio blob on the shared audio element ──
+    const playBlob = useCallback((blob: Blob): Promise<void> => {
+        return new Promise<void>((resolve) => {
+            const audioEl = edgeTtsAudioElRef.current;
+            if (!audioEl) {
+                resolve();
+                return;
+            }
+            const url = URL.createObjectURL(blob);
+            audioEl.src = url;
+
+            const done = () => {
+                URL.revokeObjectURL(url);
+                resolve();
+            };
+
+            audioEl.onended = done;
+            audioEl.onerror = done;
+
+            // Watchdog — max 20s per sentence
+            const wd = setTimeout(() => {
+                audioEl.pause();
+                done();
+            }, 20000);
+
+            audioEl.play().then(() => {
+                // Clear watchdog on natural end
+                audioEl.onended = () => {
+                    clearTimeout(wd);
+                    done();
+                };
+            }).catch(() => {
+                clearTimeout(wd);
+                done();
+            });
+        });
+    }, []);
+
+    // ── Process one voice cycle with sentence-streaming TTS ──
+    const processVoiceCycle = useCallback(async (userText: string) => {
+        if (isProcessingRef.current) return;
+        isProcessingRef.current = true;
+
+        // Sentence queue: text + pre-fetched audio blob
+        const queue: SentenceJob[] = [];
+        let streamDone = false;
+        let playerRunning = false;
+
+        // Sequential player — plays blobs one after another
+        const runPlayer = async () => {
+            if (playerRunning) return;
+            playerRunning = true;
+            setOrbState("speaking");
+
+            while (queue.length > 0 || !streamDone) {
+                if (queue.length === 0) {
+                    // Wait 50ms for more sentences
+                    await new Promise((r) => setTimeout(r, 50));
+                    continue;
+                }
+                const job = queue.shift()!;
+                const blob = await job.blobPromise;
+                if (blob && blob.size > 0) {
+                    await playBlob(blob);
+                }
+            }
+            playerRunning = false;
+        };
+
+        const voice = useSettingsStore.getState().edgeTtsVoice;
+
+        try {
+            // 1. Add user message
+            addMessage({
+                id: crypto.randomUUID(),
+                role: "user",
+                content: userText,
+                timestamp: new Date().toISOString(),
+                source: "voice",
+            });
+
+            // 2. Thinking
+            setOrbState("thinking");
+            clientRef.current?.muteMic();
+
+            // 3. Create assistant placeholder
+            addMessage({
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "",
+                timestamp: new Date().toISOString(),
+                source: "voice",
+            });
+
+            // 4. Stream GPT + pre-fetch TTS per sentence
+            const playerPromise = (async () => {
+                // Wait for first sentence before starting player
+                while (queue.length === 0 && !streamDone) {
+                    await new Promise((r) => setTimeout(r, 30));
+                }
+                await runPlayer();
+            })();
+
+            const rawResponse = await sendToChat(userText, (sentence: string) => {
+                // Clean DSML from sentence
+                let clean = sentence;
+                clean = clean.replace(/<\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[^>]*>[\s\S]*?(?:<\s*\/[^>]*>|$)/gi, "");
+                clean = clean.trim();
+                if (clean.length < 3) return;
+
+                // Pre-fetch audio blob immediately (don't wait)
+                const blobPromise = prefetchEdgeTTS(clean, voice);
+                queue.push({ text: clean, blobPromise });
+            });
+
+            streamDone = true;
+
+            // Wait for player to finish all queued sentences
+            await playerPromise;
+
+            // 5. Clean & finalize response text
+            const cleanText = cleanResponse(rawResponse);
+            updateLastAssistantMessage({ content: cleanText });
+
+            // 6. Counters & preferences
+            const counterTypes = detectCounterTypes(rawResponse);
+            for (const ct of counterTypes) {
+                useAnimationStore.getState().triggerAnimation(ct);
+            }
+            const prefs = extractPreferences(rawResponse);
+            if (prefs.length > 0) {
+                for (const rule of prefs) {
+                    void fetch("/api/preferences", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ userId, rule }),
+                    }).catch(() => { /* silent */ });
+                }
+            }
+
+            // 7. Auto-save to Obsidian
+            sendToObsidian(userText, cleanText, userId).catch(() => { /* silent */ });
+
+            // 8. Save to voice memory
+            fetch("/api/voice-memory", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userId,
+                    userText,
+                    assistantText: cleanText,
+                }),
+            }).catch(() => { /* silent */ });
+
+        } catch (err) {
+            if ((err as Error).name !== "AbortError") {
+                logger.error("Voice cycle error:", (err as Error).message);
+                useNotificationStore
+                    .getState()
+                    .addNotification(
+                        `Ошибка: ${(err as Error).message}`,
+                        "error",
+                    );
+            }
+        } finally {
+            streamDone = true;
+            isProcessingRef.current = false;
+            clientRef.current?.unmuteMic();
+            if (clientRef.current) {
+                setOrbState("listening");
+            }
+        }
+    }, [
+        userId,
+        addMessage,
+        updateLastAssistantMessage,
+        setOrbState,
+        sendToChat,
+        cleanResponse,
+        playBlob,
+    ]);
+
+    // ── Hot-swap TTS provider ──
     useEffect(() => {
         const unsub = useSettingsStore.subscribe(
             (s) => s.ttsProvider,
             () => {
-                // Stop any active TTS playback
-                stopEdgeTTS();
+                cleanupTTS();
                 if ("speechSynthesis" in window) {
-                    window.speechSynthesis.cancel();
-                }
-                if (browserTtsWatchdogRef.current) {
-                    clearTimeout(browserTtsWatchdogRef.current);
-                    browserTtsWatchdogRef.current = null;
-                }
-                if (browserTtsKeepAliveRef.current) {
-                    clearInterval(browserTtsKeepAliveRef.current);
-                    browserTtsKeepAliveRef.current = null;
-                }
-                // If voice session is active — reset state
-                if (clientRef.current) {
-                    resetResponseState();
-                    setOrbState("listening");
-                }
-                // Warm up speechSynthesis when switching to browser TTS
-                // (mobile requires user gesture to unlock speechSynthesis)
-                const newProvider = useSettingsStore.getState().ttsProvider;
-                if (newProvider === "browser" && "speechSynthesis" in window) {
                     const warmup = new SpeechSynthesisUtterance(" ");
                     warmup.volume = 0;
                     window.speechSynthesis.cancel();
@@ -148,479 +440,102 @@ export function useVoiceSession() {
             },
         );
         return () => unsub();
-    }, [stopEdgeTTS, resetResponseState, setOrbState]);
+    }, [cleanupTTS]);
 
+    // ── Start voice session ──
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
 
-        const ttsProvider = useSettingsStore.getState().ttsProvider;
-        // OpenAI TTS = use native audio (muteAudio=false), all others = external TTS (muteAudio=true)
-        const useExternalTts = ttsProvider !== "openai";
-
-        setModality("voice");
-        setOrbState("listening"); // Show listening while connecting
-
-        // Create Edge TTS audio element during user gesture (mobile autoplay compat)
-        const edgeTtsAudioEl = document.createElement("audio");
-        edgeTtsAudioEl.setAttribute("playsinline", "true");
-        edgeTtsAudioEl.style.display = "none";
-        document.body.appendChild(edgeTtsAudioEl);
-
-        // Set up TTS audio analyser for orb visualization during assistant speech
-        try {
-            const ttsCtx = new AudioContext();
-            const ttsSource = ttsCtx.createMediaElementSource(edgeTtsAudioEl);
-            const ttsAnalyser = ttsCtx.createAnalyser();
-            ttsAnalyser.fftSize = 256;
-            ttsSource.connect(ttsAnalyser);
-            ttsAnalyser.connect(ttsCtx.destination); // must connect to hear audio
-            ttsAudioCtxRef.current = ttsCtx;
-            ttsAnalyserRef.current = ttsAnalyser;
-            ttsAnalyserDataRef.current = new Uint8Array(ttsAnalyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
-        } catch {
-            // Non-critical — TTS will still play, just no orb reactivity
+        const available = await LocalVoiceClient.isAvailable();
+        if (!available) {
+            useNotificationStore
+                .getState()
+                .addNotification(
+                    "Local Core не запущен. Запустите local_core: python main.py",
+                    "error",
+                );
+            return;
         }
 
-        const callbacks: VoiceClientCallbacks = {
-            onConnected: () => {
-                setOrbState("listening");
-            },
+        setModality("voice");
+        setOrbState("listening");
 
-            onTranscriptUser: (text: string) => {
-                // Whisper finished — update the placeholder with accurate text
-                userTranscriptReceived.current = true;
+        // Create audio element for TTS playback (user gesture context)
+        const audioEl = document.createElement("audio");
+        audioEl.setAttribute("playsinline", "true");
+        audioEl.style.display = "none";
+        document.body.appendChild(audioEl);
+        edgeTtsAudioElRef.current = audioEl;
 
-                if (pendingUserMsgId.current) {
-                    useChatStore.getState().updateMessageById(
-                        pendingUserMsgId.current,
-                        { content: text },
-                    );
-                    // Don't clear pendingUserMsgId here — Whisper may fire multiple
-                    // times. It gets cleared in resetResponseState() at end of cycle.
-                } else {
-                    // Fallback: no placeholder (shouldn't happen), add directly
-                    addMessage({
-                        id: crypto.randomUUID(),
-                        role: "user" as const,
-                        content: text,
-                        timestamp: new Date().toISOString(),
-                        source: "voice" as const,
-                    });
+        // Set up TTS audio analyser for orb visualization
+        try {
+            const ctx = new AudioContext();
+            const source = ctx.createMediaElementSource(audioEl);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            analyser.connect(ctx.destination);
+            ttsAudioCtxRef.current = ctx;
+            ttsAnalyserRef.current = analyser;
+            ttsAnalyserDataRef.current = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+        } catch {
+            // Non-critical
+        }
+
+        let interimText = "";
+
+        const callbacks: LocalVoiceCallbacks = {
+            onTranscriptUser: (text: string, isFinal: boolean) => {
+                if (isFinal && text.trim().length > 0) {
+                    setLiveTranscript("");
+                    void processVoiceCycle(text.trim());
+                } else if (!isFinal) {
+                    interimText = text;
+                    setLiveTranscript(text);
                 }
-            },
-
-            onTranscriptAssistant: (accumulated: string) => {
-                lastAssistantText.current = accumulated;
-                isAssistantResponding.current = true;
-                if (edgeTtsMessageShown.current) {
-                    updateLastAssistantMessage({ content: accumulated });
-                }
-            },
-
-            onAudioStart: () => {
-                isServerResponseActive.current = true;
-                setOrbState("speaking");
-                // Soft-mute mic to prevent echo (model hearing itself)
-                clientRef.current?.softMuteMic();
             },
 
             onUserSpeechStarted: () => {
-                setOrbState("listening");
-
-                // Barge-in — only for external TTS
-                // OpenAI native TTS handles interruptions via WebRTC natively
-                const currentTts = useSettingsStore.getState().ttsProvider;
-                if (currentTts === "openai") return;
-
-                if (isAssistantResponding.current) {
-                    stopEdgeTTS();
-                    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-                    if (browserTtsWatchdogRef.current) {
-                        clearTimeout(browserTtsWatchdogRef.current);
-                        browserTtsWatchdogRef.current = null;
-                    }
-                    if (browserTtsKeepAliveRef.current) {
-                        clearInterval(browserTtsKeepAliveRef.current);
-                        browserTtsKeepAliveRef.current = null;
-                    }
-                    if (isServerResponseActive.current) {
-                        clientRef.current?.cancelCurrentResponse();
-                    }
-                    resetResponseState();
+                interimText = "";
+                if (isProcessingRef.current) {
+                    abortRef.current?.abort();
+                    cleanupTTS();
+                    isProcessingRef.current = false;
+                }
+                if (!isProcessingRef.current) {
+                    setOrbState("listening");
                 }
             },
 
             onUserSpeechStopped: () => {
-                setOrbState("thinking");
-
-                // Grab SpeechRecognition text before clearing the bubble
-                const currentText = useChatStore.getState().liveTranscript || "...";
-                setLiveTranscript(""); // hide bubble
-
-                // Create user message immediately with SpeechRecognition text
-                // → bubble disappears but SAME text appears as chat message (no jump)
-                // → message is created BEFORE GPT responds (correct order)
-                if (!pendingUserMsgId.current) {
-                    const id = crypto.randomUUID();
-                    pendingUserMsgId.current = id;
-                    addMessage({
-                        id,
-                        role: "user" as const,
-                        content: currentText,
-                        timestamp: new Date().toISOString(),
-                        source: "voice" as const,
-                    });
+                if (!isProcessingRef.current && interimText.trim()) {
+                    setOrbState("thinking");
                 }
             },
 
-            onAudioEnd: () => {
-                // Server finished generating text — TTS playback is local from here
-                isServerResponseActive.current = false;
-
-                // Detect counter type from AI response
-                const counterType = detectCounterType(
-                    lastAssistantText.current,
-                );
-
-                // Save text before TTS starts
-                const savedText = lastAssistantText.current;
-
-                // Detect and save behavior preferences
-                const prefs = extractPreferences(savedText);
-                if (prefs.length > 0) {
-                    for (const rule of prefs) {
-                        void fetch("/api/preferences", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ userId, rule }),
-                        }).catch(() => { /* silent */ });
-                    }
-                    // Live update: re-fetch all rules and update session immediately
-                    void (async () => {
-                        try {
-                            const prefRes = await fetch(`/api/preferences?userId=${encodeURIComponent(userId)}`);
-                            if (prefRes.ok) {
-                                const prefData = (await prefRes.json()) as { rules: string[]; profile: string | null };
-                                if (clientRef.current) {
-                                    // Prefer condensed profile over individual rules
-                                    const rulesText = prefData.profile
-                                        ?? prefData.rules.map((r: string, i: number) => `${i + 1}. ${r}`).join("\n");
-                                    if (rulesText) clientRef.current.setBehaviorRules(rulesText);
-                                }
-                            }
-                        } catch { /* silent */ }
-                    })();
+            onStatusChange: (status) => {
+                if (status === "ready") {
+                    logger.info("[Voice] Local STT connected");
+                } else if (status === "error") {
+                    logger.error("[Voice] STT connection error");
+                    useNotificationStore
+                        .getState()
+                        .addNotification("Ошибка подключения к STT", "error");
                 }
-
-                // Strip both COUNTER and SAVE_PREF tags from visible text
-                let cleanText = savedText;
-                if (counterType) cleanText = stripCounterTag(cleanText);
-                cleanText = stripPrefTag(cleanText);
-                // Strip JSON wrappers that gpt-realtime-1.5 adds: {"text"} or {"text}
-                cleanText = cleanText.replace(/^\{["']?\s*/, "").replace(/\s*["']?\}$/, "");
-                // Strip leading/trailing quotes
-                cleanText = cleanText.replace(/^["']+|["']+$/g, "");
-                // Clean literal \n artifacts and trim whitespace
-                cleanText = cleanText.replace(/\\n/g, "\n").trim();
-                const aiText = cleanText;
-
-                // ── TTS: speak the response ──
-                if (savedText) {
-                    // Clean text for TTS (no internal tags)
-                    const textToSpeak = cleanText;
-
-                    // Add message to chat (unified for both providers)
-                    if (!edgeTtsMessageShown.current && textToSpeak) {
-                        edgeTtsMessageShown.current = true;
-                        addMessage({
-                            id: crypto.randomUUID(),
-                            role: "assistant",
-                            content: textToSpeak,
-                            timestamp: new Date().toISOString(),
-                            source: "voice",
-                        });
-                    }
-                    if (counterType) {
-                        useAnimationStore.getState().triggerAnimation(counterType);
-                    }
-
-                    // Launch TTS by current provider
-                    const currentTtsProvider = useSettingsStore.getState().ttsProvider;
-
-                    if (currentTtsProvider === "openai") {
-                        // OpenAI native TTS — audio plays from audioEl automatically
-                        // response.audio.done = audio finished → reset to listening
-                        setOrbState("speaking");
-                        // Small delay to let audioEl buffer finish playing
-                        setTimeout(() => {
-                            resetResponseState();
-                            setOrbState("listening");
-                        }, 500);
-                    } else {
-                        // External TTS — mute mic to prevent echo
-                        clientRef.current?.muteMic();
-                    }
-
-                    if (currentTtsProvider === "edge") {
-                        setOrbState("speaking");
-                        // Watchdog: force-reset if TTS stalls
-                        ttsWatchdogRef.current = setTimeout(() => {
-                            stopEdgeTTS();
-                            resetResponseState();
-                            setOrbState("listening");
-                        }, 30000);
-                        void speakEdgeTTS(textToSpeak, () => {
-                            resetResponseState();
-                            setOrbState("listening");
-                        }, edgeTtsAudioEl);
-                    } else if (currentTtsProvider === "yandex") {
-                        // Yandex SpeechKit: fetch from /api/tts-yandex, play via blob
-                        setOrbState("speaking");
-                        // Watchdog for Yandex TTS
-                        ttsWatchdogRef.current = setTimeout(() => {
-                            resetResponseState();
-                            setOrbState("listening");
-                        }, 30000);
-                        void (async () => {
-                            try {
-                                const res = await fetch("/api/tts-yandex", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ text: textToSpeak }),
-                                });
-                                if (!res.ok) throw new Error(`Yandex TTS: ${res.status}`);
-                                const blob = await res.blob();
-                                const url = URL.createObjectURL(blob);
-                                const audio = edgeTtsAudioEl ?? new Audio();
-                                audio.src = url;
-                                audio.onended = () => {
-                                    URL.revokeObjectURL(url);
-                                    resetResponseState();
-                                    setOrbState("listening");
-                                };
-                                await audio.play().catch(() => {
-                                    resetResponseState();
-                                    setOrbState("listening");
-                                });
-                            } catch {
-                                resetResponseState();
-                                setOrbState("listening");
-                            }
-                        })();
-                    } else {
-                        // Browser TTS via Web Speech API
-                        if (textToSpeak && "speechSynthesis" in window) {
-                            setOrbState("speaking");
-                            window.speechSynthesis.cancel();
-
-                            const doSpeak = () => {
-                                const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                                utterance.lang = "ru-RU";
-                                utterance.rate = 1.0;
-                                utterance.pitch = 1.0;
-
-                                // Try to find a Russian voice explicitly
-                                const voices = window.speechSynthesis.getVoices();
-                                const ruVoice = voices.find((v) => v.lang.startsWith("ru"));
-                                if (ruVoice) {
-                                    utterance.voice = ruVoice;
-                                }
-
-                                // Watchdog: force-reset if onend doesn't fire
-                                const watchdogMs = Math.max(5000, textToSpeak.length * 100);
-                                browserTtsWatchdogRef.current = setTimeout(() => {
-                                    window.speechSynthesis.cancel();
-                                    resetResponseState();
-                                    setOrbState("listening");
-                                    browserTtsWatchdogRef.current = null;
-                                }, watchdogMs);
-
-                                const cleanup = () => {
-                                    if (browserTtsWatchdogRef.current) {
-                                        clearTimeout(browserTtsWatchdogRef.current);
-                                        browserTtsWatchdogRef.current = null;
-                                    }
-                                    if (browserTtsKeepAliveRef.current) {
-                                        clearInterval(browserTtsKeepAliveRef.current);
-                                        browserTtsKeepAliveRef.current = null;
-                                    }
-                                    resetResponseState();
-                                    setOrbState("listening");
-                                };
-
-                                utterance.onend = cleanup;
-                                utterance.onerror = (e) => {
-                                    logger.warn("Browser TTS error:", e);
-                                    cleanup();
-                                };
-
-                                window.speechSynthesis.speak(utterance);
-                            };
-
-                            // Voices may not be loaded yet — wait for them
-                            const voices = window.speechSynthesis.getVoices();
-                            if (voices.length === 0) {
-                                // Voices not loaded — wait for voiceschanged event
-                                const onVoicesReady = () => {
-                                    window.speechSynthesis.removeEventListener("voiceschanged", onVoicesReady);
-                                    doSpeak();
-                                };
-                                window.speechSynthesis.addEventListener("voiceschanged", onVoicesReady);
-                                // Fallback: if voiceschanged never fires, try anyway after 500ms
-                                setTimeout(() => {
-                                    window.speechSynthesis.removeEventListener("voiceschanged", onVoicesReady);
-                                    doSpeak();
-                                }, 500);
-                            } else {
-                                doSpeak();
-                            }
-
-                            // Chrome bug workaround: speechSynthesis pauses after ~15s
-                            browserTtsKeepAliveRef.current = setInterval(() => {
-                                if (!window.speechSynthesis.speaking) {
-                                    if (browserTtsKeepAliveRef.current) {
-                                        clearInterval(browserTtsKeepAliveRef.current);
-                                        browserTtsKeepAliveRef.current = null;
-                                    }
-                                    return;
-                                }
-                                window.speechSynthesis.pause();
-                                window.speechSynthesis.resume();
-                            }, 10000);
-                        } else {
-                            resetResponseState();
-                            setOrbState("listening");
-                        }
-                    }
-                } else {
-                    // No text to speak — reset immediately
-                    resetResponseState();
-                    setOrbState("listening");
-                }
-
-                // ── Auto-send to Obsidian (fire-and-forget) ──
-                if (aiText) {
-                    const msgs = useChatStore.getState().messages;
-                    const lastUser = [...msgs]
-                        .reverse()
-                        .find((m) => m.role === "user");
-                    if (lastUser) {
-                        sendToObsidian(lastUser.content, aiText, userId).catch(
-                            () => { /* handled inside */ },
-                        );
-                    }
-                }
-
-                // ── Save to memory store + classify ──
-                const userMsgForMem = [...useChatStore.getState().messages]
-                    .reverse()
-                    .find((m) => m.role === "user");
-                fetch("/api/voice-memory", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        userId,
-                        userText: userMsgForMem?.content,
-                        assistantText: aiText || savedText,
-                    }),
-                })
-                    .then((res) => res.json())
-                    .then((data: { counterTags?: string[] }) => {
-                        if (data.counterTags && data.counterTags.length > 0) {
-                            for (const tag of data.counterTags) {
-                                const match = /\[COUNTER:(ideas|facts|persons|tasks)\]/i.exec(tag);
-                                if (match) {
-                                    useAnimationStore
-                                        .getState()
-                                        .triggerAnimation(match[1].toLowerCase() as "ideas" | "facts" | "persons" | "tasks");
-                                }
-                            }
-                        }
-                    })
-                    .catch(() => { /* silent */ });
             },
 
-            onSessionError: (err: Error) => {
-                logger.error("Voice session error:", err.message);
+            onError: (message: string) => {
+                logger.error("[Voice] Error:", message);
                 useNotificationStore
                     .getState()
-                    .addNotification(err.message, "error");
-                stopVoiceInternal();
-            },
-
-            onTokenUsage: (usage) => {
-                useCountersStore.getState().reportTokenUsage(
-                    userId ?? "",
-                    "gpt-realtime-1.5",
-                    usage.textIn,
-                    usage.textOut,
-                    usage.audioIn,
-                    usage.audioOut,
-                ).catch(() => { /* silent */ });
+                    .addNotification(`Голос: ${message}`, "error");
             },
         };
 
-        const client = new RealtimeVoiceClient(callbacks);
+        const client = new LocalVoiceClient(callbacks);
         clientRef.current = client;
 
         try {
-            // Fetch context (memory + vault + chat) for voice instructions
-            let voiceContext = "";
-            try {
-                const msgs = useChatStore.getState().messages;
-                const recentMessages = msgs.slice(-10).map((m) => ({
-                    role: m.role,
-                    content: m.content,
-                }));
-
-                const ctxRes = await fetch("/api/voice-context", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ userId, recentMessages }),
-                });
-
-                if (ctxRes.ok) {
-                    const ctxData = (await ctxRes.json()) as { context?: string };
-                    voiceContext = ctxData.context ?? "";
-                }
-            } catch {
-                // Context fetch failed silently — voice still works
-            }
-
-            // Append user's Obsidian vault notes (server-side, per-user)
-            try {
-                const vaultRes = await fetch("/api/vault-context", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ userId }),
-                });
-                if (vaultRes.ok) {
-                    const vaultData = (await vaultRes.json()) as { context?: string };
-                    if (vaultData.context) {
-                        voiceContext += "\n--- OBSIDIAN NOTES ---\n" + vaultData.context + "\n--- END NOTES ---";
-                    }
-                }
-            } catch {
-                // Vault read failed silently
-            }
-
-            // Load saved behavior rules (injected at TOP of prompt via setBehaviorRules)
-            let savedBehaviorRules = "";
-            try {
-                const prefRes = await fetch(`/api/preferences?userId=${encodeURIComponent(userId)}`);
-                if (prefRes.ok) {
-                    const prefData = (await prefRes.json()) as { rules: string[]; profile: string | null };
-                    // Prefer condensed profile over individual rules
-                    savedBehaviorRules = prefData.profile
-                        ?? (prefData.rules.length > 0
-                            ? prefData.rules.map((r, i) => `${i + 1}. ${r}`).join("\n")
-                            : "");
-                }
-            } catch {
-                // Silent
-            }
-
-            // Warm up speechSynthesis during active user gesture (required by Chrome)
             if ("speechSynthesis" in window) {
                 const warmup = new SpeechSynthesisUtterance(" ");
                 warmup.volume = 0;
@@ -628,18 +543,27 @@ export function useVoiceSession() {
                 window.speechSynthesis.speak(warmup);
             }
 
-            await client.start(voiceContext, useExternalTts);
-            if (savedBehaviorRules) {
-                client.setBehaviorRules(savedBehaviorRules);
-            }
+            await client.start();
             setIsVoiceActive(true);
-
-            // Start Web Speech API for real-time character-by-character transcription
             startRecognition();
-            const rlog = createRemoteLogger(userId, "voice");
-            rlog.info("Voice session started", { ttsProvider: useExternalTts ? useSettingsStore.getState().ttsProvider : "openai" });
 
-            // Start audio level metering loop for orb visualization
+            // Set up mic analyser for orb visualization (particles react to voice)
+            const micStream = client.getStream();
+            if (micStream) {
+                try {
+                    const micCtx = new AudioContext();
+                    const micSource = micCtx.createMediaStreamSource(micStream);
+                    const micAnalyser = micCtx.createAnalyser();
+                    micAnalyser.fftSize = 256;
+                    micSource.connect(micAnalyser);
+                    micAnalyserRef.current = micAnalyser;
+                    micAnalyserDataRef.current = new Uint8Array(micAnalyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+                } catch {
+                    // Non-critical
+                }
+            }
+
+            // Audio level metering
             const getTtsLevel = (): number => {
                 if (!ttsAnalyserRef.current || !ttsAnalyserDataRef.current) return 0;
                 ttsAnalyserRef.current.getByteFrequencyData(ttsAnalyserDataRef.current);
@@ -649,26 +573,38 @@ export function useVoiceSession() {
                 }
                 return Math.min(sum / (ttsAnalyserDataRef.current.length * 128), 1);
             };
+
+            // Mic audio level getter
+            const getMicLevel = (): number => {
+                if (!micAnalyserRef.current || !micAnalyserDataRef.current) return 0;
+                micAnalyserRef.current.getByteFrequencyData(micAnalyserDataRef.current);
+                let sum = 0;
+                for (let i = 0; i < micAnalyserDataRef.current.length; i++) {
+                    sum += micAnalyserDataRef.current[i];
+                }
+                return Math.min(sum / (micAnalyserDataRef.current.length * 128), 1);
+            };
+
             const meterLoop = () => {
                 const orbSt = useChatStore.getState().orbState;
                 if (orbSt === "speaking") {
-                    // During TTS playback, read volume from TTS audio
                     setAudioLevel(getTtsLevel());
-                } else if (clientRef.current) {
-                    // Otherwise read mic volume
-                    setAudioLevel(clientRef.current.getAudioLevel());
+                } else if (orbSt === "listening") {
+                    setAudioLevel(getMicLevel());
+                } else {
+                    setAudioLevel(0.05);
                 }
                 audioLevelRafRef.current = requestAnimationFrame(meterLoop);
             };
             audioLevelRafRef.current = requestAnimationFrame(meterLoop);
+
+            logger.info("[Voice] Session started (Local STT + LLM + EdgeTTS sentence streaming)");
         } catch (err) {
-            const errMsg = err instanceof Error ? err.message : "Unknown error";
-            logger.error("Failed to start voice session:", errMsg);
-            createRemoteLogger(userId, "voice").error(`Session start failed: ${errMsg}`);
+            logger.error("Failed to start voice:", err instanceof Error ? err.message : err);
             useNotificationStore
                 .getState()
                 .addNotification(
-                    `Не удалось запустить голос: ${err instanceof Error ? err.message : "Неизвестная ошибка"}`,
+                    `Не удалось запустить голос: ${err instanceof Error ? err.message : "Ошибка"}`,
                     "error",
                 );
             clientRef.current = null;
@@ -676,19 +612,49 @@ export function useVoiceSession() {
             setModality("text");
         }
     }, [
-        userId,
-        addMessage,
-        updateLastAssistantMessage,
-        insertMessageBeforeLastAssistant,
         setOrbState,
         setModality,
-        stopVoiceInternal,
-        speakEdgeTTS,
+        setAudioLevel,
+        setLiveTranscript,
+        processVoiceCycle,
+        cleanupTTS,
+        startRecognition,
     ]);
 
+    // ── Stop voice session ──
     const stopVoice = useCallback(() => {
-        stopVoiceInternal();
-    }, [stopVoiceInternal]);
+        if (clientRef.current) {
+            clientRef.current.stop();
+            clientRef.current = null;
+        }
+        abortRef.current?.abort();
+        cleanupTTS();
+        stopRecognition();
+        setLiveTranscript("");
+
+        if (edgeTtsAudioElRef.current) {
+            edgeTtsAudioElRef.current.remove();
+            edgeTtsAudioElRef.current = null;
+        }
+
+        if (audioLevelRafRef.current !== null) {
+            cancelAnimationFrame(audioLevelRafRef.current);
+            audioLevelRafRef.current = null;
+        }
+        setAudioLevel(0);
+
+        if (ttsAudioCtxRef.current) {
+            ttsAudioCtxRef.current.close().catch(() => { /* silent */ });
+            ttsAudioCtxRef.current = null;
+            ttsAnalyserRef.current = null;
+            ttsAnalyserDataRef.current = null;
+        }
+
+        isProcessingRef.current = false;
+        setIsVoiceActive(false);
+        setOrbState("idle");
+        setModality("text");
+    }, [setOrbState, setModality, setAudioLevel, setLiveTranscript, cleanupTTS, stopRecognition]);
 
     return {
         isVoiceActive,

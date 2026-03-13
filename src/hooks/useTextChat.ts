@@ -10,6 +10,7 @@ import { detectCounterTypes, stripCounterTag } from "@/lib/detectCounterType";
 import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
+import { stripDSML } from "@/lib/stripDSML";
 
 export function useTextChat() {
     const addMessage = useChatStore((s) => s.addMessage);
@@ -136,8 +137,10 @@ export function useTextChat() {
                                 parsed.choices?.[0]?.delta?.content;
                             if (content) {
                                 accumulated += content;
+                                // Strip DSML function call blocks in real-time
+                                const display = stripDSML(accumulated);
                                 updateLastAssistantMessage({
-                                    content: accumulated,
+                                    content: display,
                                 });
                             }
                         } catch {
@@ -171,9 +174,11 @@ export function useTextChat() {
                 }
 
                 // ── Auto-send to Obsidian (fire-and-forget) ──
-                const finalText = counterTypes.length > 0
-                    ? stripCounterTag(accumulated)
-                    : accumulated;
+                const finalText = stripDSML(
+                    counterTypes.length > 0
+                        ? stripCounterTag(accumulated)
+                        : accumulated,
+                );
                 sendToObsidian(trimmed, finalText, userId).catch(() => {
                     /* handled inside sendToObsidian */
                 });

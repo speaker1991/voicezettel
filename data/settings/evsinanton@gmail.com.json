@@ -15,6 +15,8 @@
   "edgeTtsVoice": "ru-RU-SvetlanaNeural",
   "obsidianApiKey": "",
   "obsidianApiUrl": "http://127.0.0.1:27123",
+  "voiceMode": "cloud",
+  "lavMode": false,
   "behaviorRules": [
     "мужской голос"
   ]

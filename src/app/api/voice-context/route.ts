@@ -72,6 +72,41 @@ export async function POST(req: NextRequest) {
         parts.push("--- END CHAT ---");
     }
 
+    // 4. ChromaDB RAG context (local_core vector search)
+    const LOCAL_CORE_URL = process.env.LOCAL_CORE_URL ?? "http://localhost:8000";
+    if (lastUserMsg && lastUserMsg.content.length > 3) {
+        try {
+            const chromaRes = await fetch(`${LOCAL_CORE_URL}/api/memory/search`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    query: lastUserMsg.content,
+                    top_k: 3,
+                    source: "obsidian_vault",
+                }),
+                signal: AbortSignal.timeout(2000),
+            });
+
+            if (chromaRes.ok) {
+                const results = (await chromaRes.json()) as Array<{
+                    text: string;
+                    metadata: Record<string, string>;
+                    relevance_pct: number;
+                }>;
+                if (results.length > 0) {
+                    parts.push("\n--- РЕЛЕВАНТНЫЕ ЗАМЕТКИ (ChromaDB) ---");
+                    for (const r of results) {
+                        const title = r.metadata?.title ?? "";
+                        parts.push(`- [${title}] ${r.text.slice(0, 200)}`);
+                    }
+                    parts.push("--- КОНЕЦ ЗАМЕТОК ---");
+                }
+            }
+        } catch {
+            // Local core offline — silent fallback
+        }
+    }
+
     // NOTE: Vault context is now loaded SERVER-SIDE via /api/vault-context
     // and appended in useVoiceSession (per-user isolation)
 

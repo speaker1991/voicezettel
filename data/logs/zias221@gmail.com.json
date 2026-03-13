@@ -140,5 +140,27 @@
     "context": {
       "ttsProvider": "edge"
     }
+  },
+  {
+    "id": "d9413a0e-06cb-42e8-8f21-601efc53d8b5",
+    "timestamp": "2026-03-12T15:54:26.888Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
+  },
+  {
+    "id": "55c94996-9f67-486e-94d2-71826d3366f9",
+    "timestamp": "2026-03-12T15:56:51.955Z",
+    "userId": "zias221@gmail.com",
+    "level": "INFO",
+    "source": "voice",
+    "message": "Voice session started",
+    "context": {
+      "ttsProvider": "yandex"
+    }
   }
 ]

@@ -375,6 +375,44 @@ export function SettingsPanel({
                             </div>
                         </section>
 
+                        {/* ── Voice Mode ────────────────────── */}
+                        <section className="mb-6">
+                            <h3 className="mb-3 text-sm font-semibold text-zinc-400">
+                                Голосовой движок
+                            </h3>
+                            <div className="divide-y divide-white/5">
+
+                                <div className="flex items-center justify-between py-2">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm text-zinc-300">
+                                            🎙 Петличка
+                                        </span>
+                                        <span className="text-xs text-zinc-500">
+                                            Фоновая запись встречи
+                                        </span>
+                                    </div>
+                                    <button
+                                        className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${settings.lavMode
+                                            ? "bg-emerald-600 text-white"
+                                            : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                            }`}
+                                        onClick={() => {
+                                            settings.toggleLavMode();
+                                            const newState = !settings.lavMode;
+                                            useNotificationStore.getState().addNotification(
+                                                newState
+                                                    ? "Петличка включена — запись началась"
+                                                    : "Петличка выключена — генерируется конспект",
+                                                newState ? "info" : "info",
+                                            );
+                                        }}
+                                    >
+                                        {settings.lavMode ? "⏹ Выкл" : "▶ Вкл"}
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
                         {/* ── Orb particles ─────────────────── */}
                         <section className="mb-6">
                             <h3 className="mb-1 text-sm font-semibold text-zinc-400">

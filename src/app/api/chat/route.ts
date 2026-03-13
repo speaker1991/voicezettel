@@ -10,10 +10,52 @@ import {
 import { writeNoteToVault } from "@/lib/vaultWriter";
 import { classifyAndSave } from "@/lib/messageClassifier";
 import { logger } from "@/lib/logger";
+import { parseDSMLCalls, hasDSML, extractTextBeforeDSML } from "@/lib/parseDSML";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const LOCAL_CORE_URL = process.env.LOCAL_CORE_URL ?? "http://localhost:8000";
+
+// ── ChromaDB RAG helper ──────────────────────────────────────
+interface ChromaResult {
+    id: string;
+    text: string;
+    metadata: Record<string, string>;
+    distance: number;
+    relevance_pct: number;
+}
+
+async function fetchChromaContext(query: string): Promise<string> {
+    try {
+        const res = await fetch(`${LOCAL_CORE_URL}/api/memory/search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                query,
+                top_k: 3,
+                source: "obsidian_vault",
+            }),
+            signal: AbortSignal.timeout(1500),
+        });
+
+        if (!res.ok) return "";
+
+        const results = (await res.json()) as ChromaResult[];
+        if (!results || results.length === 0) return "";
+
+        const parts = ["--- РЕЛЕВАНТНЫЙ КОНТЕКСТ ИЗ ЗАМЕТОК (ChromaDB RAG) ---"];
+        for (const r of results) {
+            const title = r.metadata?.title ?? "без названия";
+            parts.push(`• [${title}] (релевантность: ${r.relevance_pct}%) ${r.text.slice(0, 300)}`);
+        }
+        parts.push("--- КОНЕЦ КОНТЕКСТА ---");
+        return parts.join("\n");
+    } catch {
+        // Local core offline — silent fallback
+        return "";
+    }
+}
 
 // ── Function calling tools ────────────────────────────────────
 const MEMORY_TOOLS = [
@@ -585,6 +627,7 @@ async function streamGemini(
 function appendCounterTags(
     baseStream: ReadableStream<Uint8Array>,
     classifyPromise: Promise<{ counterTags: string[] }>,
+    userId?: string,
 ): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -592,55 +635,138 @@ function appendCounterTags(
     return new ReadableStream<Uint8Array>({
         async start(controller) {
             const reader = baseStream.getReader();
-            let buffer = "";
+            let rawBuffer = "";
+            const collectedParts: string[] = []; // All SSE parts buffered
+            let fullContent = "";
 
-            // Pipe base stream through, intercepting [DONE]
+            // 1. Collect ALL chunks — do NOT emit anything yet
             try {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
+                    rawBuffer += decoder.decode(value, { stream: true });
 
-                    // Decode chunk, check for [DONE]
-                    const text = decoder.decode(value, { stream: true });
-                    buffer += text;
-
-                    // Split into complete SSE messages
-                    const parts = buffer.split("\n\n");
-                    buffer = parts.pop() ?? "";
+                    const parts = rawBuffer.split("\n\n");
+                    rawBuffer = parts.pop() ?? "";
 
                     for (const part of parts) {
                         const trimmed = part.trim();
-                        if (trimmed === "data: [DONE]") continue; // skip, we'll add our own
-                        if (trimmed) {
-                            controller.enqueue(encoder.encode(trimmed + "\n\n"));
+                        if (!trimmed || trimmed === "data: [DONE]") continue;
+                        collectedParts.push(trimmed);
+
+                        // Track full content
+                        if (trimmed.startsWith("data: ")) {
+                            try {
+                                const json = JSON.parse(trimmed.slice(6)) as {
+                                    choices?: Array<{ delta?: { content?: string } }>;
+                                };
+                                const c = json.choices?.[0]?.delta?.content;
+                                if (c) fullContent += c;
+                            } catch { /* */ }
                         }
                     }
                 }
-
-                // Flush remaining buffer (except [DONE])
-                if (buffer.trim() && buffer.trim() !== "data: [DONE]") {
-                    controller.enqueue(encoder.encode(buffer));
+                // Flush remaining
+                if (rawBuffer.trim() && rawBuffer.trim() !== "data: [DONE]") {
+                    collectedParts.push(rawBuffer.trim());
+                    if (rawBuffer.trim().startsWith("data: ")) {
+                        try {
+                            const json = JSON.parse(rawBuffer.trim().slice(6)) as {
+                                choices?: Array<{ delta?: { content?: string } }>;
+                            };
+                            const c = json.choices?.[0]?.delta?.content;
+                            if (c) fullContent += c;
+                        } catch { /* */ }
+                    }
                 }
             } catch {
                 // stream interrupted
             }
 
-            // After main stream ends, append counter tags if any
+            // 2. Check for DSML in the FULL collected content
+            const containsDSML = hasDSML(fullContent);
+
+            if (containsDSML) {
+                // --- DSML detected: extract clean text, execute functions, emit friendly ---
+                const cleanText = extractTextBeforeDSML(fullContent);
+
+                // Emit clean text portion (if any) as a single chunk
+                if (cleanText.length > 0) {
+                    const chunk = JSON.stringify({
+                        choices: [{ delta: { content: cleanText }, index: 0 }],
+                    });
+                    controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
+                }
+
+                // Execute DSML function calls
+                if (userId) {
+                    const calls = parseDSMLCalls(fullContent);
+                    const friendlyParts: string[] = [];
+
+                    for (const call of calls) {
+                        try {
+                            if (call.name === "create_zettel") {
+                                const cTitle = call.params.title || "Без названия";
+                                const cContent = call.params.content || call.params.essence || "";
+                                const cNoteType = call.params.noteType || "fact";
+                                const cTags = call.params.tags ? call.params.tags.split(",").map((t: string) => t.trim()) : [];
+                                const now = new Date();
+                                const TYPE_EMOJI: Record<string, string> = { idea: "💡", fact: "📚", task: "✅", persona: "👤" };
+                                const emoji = TYPE_EMOJI[cNoteType] ?? "📚";
+                                const md = `---\ntype: ${cNoteType}\ntags: [${cTags.map((t: string) => `"${t}"`).join(", ")}]\ncreated: ${now.toISOString()}\n---\n\n# ${cTitle}\n\n${emoji} **Суть**\n${cContent}\n`;
+                                const safeTitle = cTitle.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 100);
+                                await writeNoteToVault(userId, safeTitle, md);
+                                await saveMemory(userId, `Zettel: ${cTitle} — ${cContent.slice(0, 100)}`, ["zettel", cNoteType]);
+                                friendlyParts.push(`📝 Заметка «${safeTitle}» создана!`);
+                                logger.info(`[DSML] Created zettel: ${safeTitle}`);
+                            } else if (call.name === "save_memory") {
+                                const mText = call.params.text || call.params.content || "";
+                                if (mText) {
+                                    await saveMemory(userId, mText, ["chat"]);
+                                    friendlyParts.push("💾 Запомнил!");
+                                    logger.info(`[DSML] Saved memory: ${mText.slice(0, 50)}`);
+                                }
+                            } else if (call.name === "search_memory") {
+                                const sQuery = call.params.query || "";
+                                if (sQuery) {
+                                    const results = await searchMemories(userId, sQuery);
+                                    if (results.length > 0) {
+                                        friendlyParts.push(`🔍 Нашёл ${results.length} воспоминаний о «${sQuery}»`);
+                                    }
+                                    logger.info(`[DSML] Search: ${sQuery} → ${results.length}`);
+                                }
+                            }
+                        } catch (err) {
+                            logger.error(`[DSML] Error executing ${call.name}:`, (err as Error).message);
+                        }
+                    }
+
+                    if (friendlyParts.length > 0) {
+                        const fChunk = JSON.stringify({
+                            choices: [{ delta: { content: friendlyParts.join(" ") }, index: 0 }],
+                        });
+                        controller.enqueue(encoder.encode(`data: ${fChunk}\n\n`));
+                    }
+                }
+            } else {
+                // --- No DSML: replay all buffered chunks normally ---
+                for (const part of collectedParts) {
+                    controller.enqueue(encoder.encode(part + "\n\n"));
+                }
+            }
+
+            // Append counter tags if any
             try {
                 const result = await classifyPromise;
                 if (result.counterTags.length > 0) {
                     const tagStr = " " + result.counterTags.join(" ");
                     const chunk = JSON.stringify({
-                        choices: [
-                            { delta: { content: tagStr }, index: 0 },
-                        ],
+                        choices: [{ delta: { content: tagStr }, index: 0 }],
                     });
-                    controller.enqueue(
-                        encoder.encode(`data: ${chunk}\n\n`),
-                    );
+                    controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
                 }
             } catch {
-                // classifier failed — no tags, no problem
+                // classifier failed
             }
 
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -660,7 +786,8 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const { messages, provider, systemPrompt, userId } = parsed.data;
+    const { messages, provider, systemPrompt, userId, source } = parsed.data;
+    const isVoice = source === "voice";
 
     if (provider === "openai" && !OPENAI_API_KEY) {
         return NextResponse.json(
@@ -701,6 +828,14 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        if (isVoice) {
+            // Voice mode: simple prompt without any tool/zettel instructions
+            enrichedPrompt += `\n\n## ПРАВИЛА ДЛЯ ГОЛОСА:\n- Отвечай КРАТКО (1-3 предложения).\n- НЕ используй маркировку, списки, emoji — только чистый текст для озвучки.\n- НЕ вызывай функции, НЕ пиши XML/DSML теги.\n- Используй контекст из памяти и заметок если релевантен.`;
+        } else if (provider === "deepseek") {
+            // DeepSeek: conversational prompt WITHOUT function names (it generates DSML otherwise)
+            enrichedPrompt += `\n\n## ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:\nТы — приватный Экзокортекс пользователя. Запоминай всю личную информацию.\n- НИКОГДА не пиши XML, DSML, function_calls, invoke, parameter теги.\n- НЕ вызывай функции. Просто отвечай текстом.\n- Отвечай по-русски, дружелюбно и по существу.\n- Используй контекст из заметок и памяти ниже для релевантных ответов.\n\n### Счётчики\nЕсли в сообщении пользователя есть идея, факт, задача или упоминание человека — добавь в конец ответа тег:\n- Идеи → [COUNTER:ideas]\n- Факты → [COUNTER:facts]\n- Задачи → [COUNTER:tasks]\n- Люди → [COUNTER:persons]\nПример: "Записал факт! [COUNTER:facts]"`;
+
+        } else {
         enrichedPrompt += `\n\n## ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА (СТРОГО СЛЕДУЙ):
 
 ### 0. ПРИВАТНОСТЬ И ПАМЯТЬ (ВЫСШИЙ ПРИОРИТЕТ)
@@ -739,6 +874,7 @@ export async function POST(req: NextRequest) {
 - save_memory — запомнить важную информацию о пользователе (ВЫЗЫВАЙ ВСЕГДА при личных данных!)
 - search_memory — найти ранее сохранённую информацию
 Активно запоминай ВСЮ новую информацию без просьбы. Любой личный факт = save_memory.`;
+        }
 
         if (memoryContext) {
             enrichedPrompt += `\n\n${memoryContext}`;
@@ -746,6 +882,15 @@ export async function POST(req: NextRequest) {
 
         if (vaultContext) {
             enrichedPrompt += `\n\n--- ЗАМЕТКИ ZETTELKASTEN (контекст из Obsidian) ---\nВот существующие заметки пользователя. Используй их как контекст для более релевантных ответов. Если пользователь спрашивает о чём-то связанном — ссылайся на эти заметки.\n${vaultContext}\n--- КОНЕЦ ЗАМЕТОК ---`;
+        }
+
+        // ── ChromaDB RAG context (local_core vector search) ──
+        const userQuery = lastUserMsg?.content ?? "";
+        if (userQuery.length > 3) {
+            const chromaContext = await fetchChromaContext(userQuery);
+            if (chromaContext) {
+                enrichedPrompt += `\n\n${chromaContext}`;
+            }
         }
 
         // ── Auto-save user message to memory (fire-and-forget) ──
@@ -771,7 +916,7 @@ export async function POST(req: NextRequest) {
         if (provider === "google") {
             try {
                 const baseStream = await streamGemini(messages, enrichedPrompt);
-                const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
                 return new Response(taggedStream, {
                     headers: {
                         "Content-Type": "text/event-stream",
@@ -785,12 +930,13 @@ export async function POST(req: NextRequest) {
                 logger.warn(`Gemini failed: ${errMsg.slice(0, 100)}`);
                 if (DEEPSEEK_API_KEY) {
                     logger.warn("Falling back to DeepSeek...");
+                    const gdsPrompt = enrichedPrompt.replace(/save_memory|search_memory|create_zettel|tool_choice/gi, "").replace(/вызвать\s+\w+/gi, "запомнить");
                     const simpleMessages = [
-                        { role: "system", content: enrichedPrompt },
+                        { role: "system", content: gdsPrompt },
                         ...messages.map((m) => ({ role: m.role, content: m.content })),
                     ];
                     const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
-                    const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                    const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
                     return new Response(taggedStream, {
                         headers: {
                             "Content-Type": "text/event-stream",
@@ -804,14 +950,13 @@ export async function POST(req: NextRequest) {
         }
 
         if (provider === "deepseek") {
-            // Two-pass: first check for tool calls (save_memory, create_zettel), then stream
-            const { finalMessages } = await callDeepSeekWithTools(
-                userId,
-                messages,
-                enrichedPrompt,
-            );
-            const baseStream = await streamDeepSeek(finalMessages as Array<Record<string, unknown>>);
-            const taggedStream = appendCounterTags(baseStream, classifyPromise);
+            // DeepSeek: always stream directly (no tools — it outputs DSML text instead)
+            const finalMsgs: Array<Record<string, unknown>> = [
+                { role: "system", content: enrichedPrompt },
+                ...messages.map((m) => ({ role: m.role, content: m.content })),
+            ];
+            const baseStream = await streamDeepSeek(finalMsgs);
+            const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
             return new Response(taggedStream, {
                 headers: {
                     "Content-Type": "text/event-stream",
@@ -821,17 +966,27 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // OpenAI: first pass with function calling (non-streaming)
+        // OpenAI path
         try {
-            const { finalMessages } = await callOpenAIWithTools(
-                userId,
-                messages,
-                enrichedPrompt,
-            );
+            let finalMsgs: Array<Record<string, unknown>>;
+            if (isVoice) {
+                // Voice mode: skip tools, stream directly
+                finalMsgs = [
+                    { role: "system", content: enrichedPrompt },
+                    ...messages.map((m) => ({ role: m.role, content: m.content })),
+                ];
+            } else {
+                // Text mode: first pass with function calling
+                const { finalMessages } = await callOpenAIWithTools(
+                    userId,
+                    messages,
+                    enrichedPrompt,
+                );
+                finalMsgs = finalMessages;
+            }
 
-            // Second pass: stream the final response
-            const baseStream = await streamOpenAI(finalMessages);
-            const taggedStream = appendCounterTags(baseStream, classifyPromise);
+            const baseStream = await streamOpenAI(finalMsgs);
+            const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
 
             return new Response(taggedStream, {
                 headers: {
@@ -851,12 +1006,14 @@ export async function POST(req: NextRequest) {
             if (DEEPSEEK_API_KEY) {
                 try {
                     logger.warn("OpenAI blocked (403), falling back to DeepSeek");
+                    // Strip tool instructions (DeepSeek generates DSML otherwise)
+                    const dsPrompt = enrichedPrompt.replace(/save_memory|search_memory|create_zettel|tool_choice/gi, "").replace(/вызвать\s+\w+/gi, "запомнить");
                     const simpleMessages = [
-                        { role: "system", content: enrichedPrompt },
+                        { role: "system", content: dsPrompt },
                         ...messages.map((m) => ({ role: m.role, content: m.content })),
                     ];
                     const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
-                    const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                    const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
                     return new Response(taggedStream, {
                         headers: {
                             "Content-Type": "text/event-stream",
@@ -873,7 +1030,7 @@ export async function POST(req: NextRequest) {
             if (GOOGLE_GEMINI_API_KEY) {
                 logger.warn("Falling back to Gemini");
                 const baseStream = await streamGemini(messages, enrichedPrompt);
-                const taggedStream = appendCounterTags(baseStream, classifyPromise);
+                const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
                 return new Response(taggedStream, {
                     headers: {
                         "Content-Type": "text/event-stream",

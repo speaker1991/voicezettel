@@ -68,6 +68,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 edgeTtsVoice: "ru-RU-SvetlanaNeural",
                 obsidianApiKey: "",
                 obsidianApiUrl: "http://127.0.0.1:27123",
+                voiceMode: "cloud",
+                lavMode: false,
 
                 toggleShowUsdTokens: () =>
                     set((s) => ({ showUsdTokens: !s.showUsdTokens })),
@@ -93,6 +95,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 setEdgeTtsVoice: (voice) => set({ edgeTtsVoice: voice }),
                 setObsidianApiKey: (key) => set({ obsidianApiKey: key }),
                 setObsidianApiUrl: (url) => set({ obsidianApiUrl: url }),
+                setVoiceMode: (mode) => set({ voiceMode: mode }),
+                toggleLavMode: () => set((s) => ({ lavMode: !s.lavMode })),
             }),
             {
                 name: "voicezettel-settings",
@@ -114,8 +118,10 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                     edgeTtsVoice: state.edgeTtsVoice,
                     obsidianApiKey: state.obsidianApiKey,
                     obsidianApiUrl: state.obsidianApiUrl,
+                    voiceMode: state.voiceMode,
+                    lavMode: state.lavMode,
                 }),
-                version: 8,
+                version: 9,
                 migrate: (persisted, version) => {
                     const state = persisted as Record<string, unknown>;
                     if (version < 2) {
