@@ -628,33 +628,60 @@ function appendCounterTags(
     baseStream: ReadableStream<Uint8Array>,
     classifyPromise: Promise<{ counterTags: string[] }>,
     userId?: string,
+    isVoice?: boolean,
 ): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
+    // ── VOICE MODE: zero-buffering passthrough ──
+    if (isVoice) {
+        return new ReadableStream<Uint8Array>({
+            async start(controller) {
+                const reader = baseStream.getReader();
+                let buf = "";
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buf += decoder.decode(value, { stream: true });
+                        const parts = buf.split("\n\n");
+                        buf = parts.pop() ?? "";
+                        for (const part of parts) {
+                            const trimmed = part.trim();
+                            if (!trimmed || trimmed === "data: [DONE]") continue;
+                            controller.enqueue(encoder.encode(trimmed + "\n\n"));
+                        }
+                    }
+                    if (buf.trim() && buf.trim() !== "data: [DONE]") {
+                        controller.enqueue(encoder.encode(buf));
+                    }
+                } catch { /* stream interrupted */ }
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+            },
+        });
+    }
+
+    // ── TEXT MODE: full buffering for DSML detection + counter tags ──
     return new ReadableStream<Uint8Array>({
         async start(controller) {
             const reader = baseStream.getReader();
             let rawBuffer = "";
-            const collectedParts: string[] = []; // All SSE parts buffered
+            const collectedParts: string[] = [];
             let fullContent = "";
 
-            // 1. Collect ALL chunks — do NOT emit anything yet
+            // 1. Collect ALL chunks
             try {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     rawBuffer += decoder.decode(value, { stream: true });
-
                     const parts = rawBuffer.split("\n\n");
                     rawBuffer = parts.pop() ?? "";
-
                     for (const part of parts) {
                         const trimmed = part.trim();
                         if (!trimmed || trimmed === "data: [DONE]") continue;
                         collectedParts.push(trimmed);
-
-                        // Track full content
                         if (trimmed.startsWith("data: ")) {
                             try {
                                 const json = JSON.parse(trimmed.slice(6)) as {
@@ -666,7 +693,6 @@ function appendCounterTags(
                         }
                     }
                 }
-                // Flush remaining
                 if (rawBuffer.trim() && rawBuffer.trim() !== "data: [DONE]") {
                     collectedParts.push(rawBuffer.trim());
                     if (rawBuffer.trim().startsWith("data: ")) {
@@ -679,18 +705,13 @@ function appendCounterTags(
                         } catch { /* */ }
                     }
                 }
-            } catch {
-                // stream interrupted
-            }
+            } catch { /* stream interrupted */ }
 
-            // 2. Check for DSML in the FULL collected content
+            // 2. Check for DSML
             const containsDSML = hasDSML(fullContent);
 
             if (containsDSML) {
-                // --- DSML detected: extract clean text, execute functions, emit friendly ---
                 const cleanText = extractTextBeforeDSML(fullContent);
-
-                // Emit clean text portion (if any) as a single chunk
                 if (cleanText.length > 0) {
                     const chunk = JSON.stringify({
                         choices: [{ delta: { content: cleanText }, index: 0 }],
@@ -702,7 +723,6 @@ function appendCounterTags(
                 if (userId) {
                     const calls = parseDSMLCalls(fullContent);
                     const friendlyParts: string[] = [];
-
                     for (const call of calls) {
                         try {
                             if (call.name === "create_zettel") {
@@ -740,7 +760,6 @@ function appendCounterTags(
                             logger.error(`[DSML] Error executing ${call.name}:`, (err as Error).message);
                         }
                     }
-
                     if (friendlyParts.length > 0) {
                         const fChunk = JSON.stringify({
                             choices: [{ delta: { content: friendlyParts.join(" ") }, index: 0 }],
@@ -749,13 +768,13 @@ function appendCounterTags(
                     }
                 }
             } else {
-                // --- No DSML: replay all buffered chunks normally ---
+                // No DSML: replay all buffered chunks
                 for (const part of collectedParts) {
                     controller.enqueue(encoder.encode(part + "\n\n"));
                 }
             }
 
-            // Append counter tags if any
+            // Append counter tags
             try {
                 const result = await classifyPromise;
                 if (result.counterTags.length > 0) {
@@ -765,9 +784,7 @@ function appendCounterTags(
                     });
                     controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
                 }
-            } catch {
-                // classifier failed
-            }
+            } catch { /* classifier failed */ }
 
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -804,17 +821,14 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        // Load vault context (cached, ~30K chars of existing notes)
-        const vaultContext = await loadVaultContext(userId);
-
-        // Load memory context (recent + semantic search)
+        // Load vault + memory context in parallel (saves ~200-400ms TTFB)
         const lastUserMsg = [...messages]
             .reverse()
             .find((m) => m.role === "user");
-        const memoryContext = await buildMemoryContext(
-            userId,
-            lastUserMsg?.content ?? "",
-        );
+        const [vaultContext, memoryContext] = await Promise.all([
+            loadVaultContext(userId),
+            buildMemoryContext(userId, lastUserMsg?.content ?? ""),
+        ]);
 
         // Build enriched system prompt
         let enrichedPrompt = systemPrompt ?? "";
@@ -916,7 +930,7 @@ export async function POST(req: NextRequest) {
         if (provider === "google") {
             try {
                 const baseStream = await streamGemini(messages, enrichedPrompt);
-                const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
+                const taggedStream = appendCounterTags(baseStream, classifyPromise, userId, isVoice);
                 return new Response(taggedStream, {
                     headers: {
                         "Content-Type": "text/event-stream",
@@ -936,7 +950,7 @@ export async function POST(req: NextRequest) {
                         ...messages.map((m) => ({ role: m.role, content: m.content })),
                     ];
                     const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
-                    const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
+                    const taggedStream = appendCounterTags(baseStream, classifyPromise, userId, isVoice);
                     return new Response(taggedStream, {
                         headers: {
                             "Content-Type": "text/event-stream",
@@ -956,7 +970,7 @@ export async function POST(req: NextRequest) {
                 ...messages.map((m) => ({ role: m.role, content: m.content })),
             ];
             const baseStream = await streamDeepSeek(finalMsgs);
-            const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
+            const taggedStream = appendCounterTags(baseStream, classifyPromise, userId, isVoice);
             return new Response(taggedStream, {
                 headers: {
                     "Content-Type": "text/event-stream",
@@ -986,7 +1000,7 @@ export async function POST(req: NextRequest) {
             }
 
             const baseStream = await streamOpenAI(finalMsgs);
-            const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
+            const taggedStream = appendCounterTags(baseStream, classifyPromise, userId, isVoice);
 
             return new Response(taggedStream, {
                 headers: {
@@ -1013,7 +1027,7 @@ export async function POST(req: NextRequest) {
                         ...messages.map((m) => ({ role: m.role, content: m.content })),
                     ];
                     const baseStream = await streamDeepSeek(simpleMessages as Array<Record<string, unknown>>);
-                    const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
+                    const taggedStream = appendCounterTags(baseStream, classifyPromise, userId, isVoice);
                     return new Response(taggedStream, {
                         headers: {
                             "Content-Type": "text/event-stream",
@@ -1030,7 +1044,7 @@ export async function POST(req: NextRequest) {
             if (GOOGLE_GEMINI_API_KEY) {
                 logger.warn("Falling back to Gemini");
                 const baseStream = await streamGemini(messages, enrichedPrompt);
-                const taggedStream = appendCounterTags(baseStream, classifyPromise, userId);
+                const taggedStream = appendCounterTags(baseStream, classifyPromise, userId, isVoice);
                 return new Response(taggedStream, {
                     headers: {
                         "Content-Type": "text/event-stream",
