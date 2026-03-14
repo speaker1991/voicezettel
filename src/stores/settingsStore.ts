@@ -121,7 +121,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                     voiceMode: state.voiceMode,
                     lavMode: state.lavMode,
                 }),
-                version: 9,
+                version: 10,
                 migrate: (persisted, version) => {
                     const state = persisted as Record<string, unknown>;
                     if (version < 2) {

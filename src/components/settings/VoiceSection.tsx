@@ -15,9 +15,10 @@ export function VoiceSection() {
                 <h3 className="mb-3 text-sm font-semibold text-zinc-400">
                     STT движок
                 </h3>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                     {([
                         { value: "local" as const, label: "🖥 Local Core", desc: "GPU (faster-whisper)" },
+                        { value: "browser" as const, label: "🌐 Browser", desc: "Web Speech API" },
                         { value: "yandex" as const, label: "☁️ Yandex STT", desc: "Облако" },
                     ] as const).map((opt) => (
                         <button

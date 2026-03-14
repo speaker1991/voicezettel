@@ -6,6 +6,7 @@ import {
     type LocalVoiceCallbacks,
 } from "@/lib/localVoiceClient";
 import { YandexSttClient } from "@/lib/yandexSttClient";
+import { BrowserSttClient } from "@/lib/browserSttClient";
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useAnimationStore } from "@/stores/animationStore";
@@ -19,6 +20,7 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useChatStream } from "@/hooks/useChatStream";
 import {
     type SentenceJob,
+    AsyncQueue,
     prefetchEdgeTTS,
     cleanResponseText,
     getAudioLevel,
@@ -30,7 +32,7 @@ import {
  * Flow: Mic → WebSocket → faster-whisper → /api/chat (stream) → EdgeTTS per sentence
  */
 export function useVoiceSession() {
-    const clientRef = useRef<LocalVoiceClient | YandexSttClient | null>(null);
+    const clientRef = useRef<LocalVoiceClient | YandexSttClient | BrowserSttClient | null>(null);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
     const { userId } = useUser();
 
@@ -103,25 +105,14 @@ export function useVoiceSession() {
         if (isProcessingRef.current) return;
         isProcessingRef.current = true;
 
-        const queue: SentenceJob[] = [];
-        let streamDone = false;
-        let playerRunning = false;
+        const queue = new AsyncQueue<SentenceJob>();
 
         const runPlayer = async () => {
-            if (playerRunning) return;
-            playerRunning = true;
             setOrbState("speaking");
-
-            while (queue.length > 0 || !streamDone) {
-                if (queue.length === 0) {
-                    await new Promise((r) => setTimeout(r, 50));
-                    continue;
-                }
-                const job = queue.shift()!;
+            for await (const job of queue) {
                 const blob = await job.blobPromise;
                 if (blob && blob.size > 0) await playBlob(blob);
             }
-            playerRunning = false;
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -129,15 +120,10 @@ export function useVoiceSession() {
         try {
             addMessage({ id: crypto.randomUUID(), role: "user", content: userText, timestamp: new Date().toISOString(), source: "voice" });
             setOrbState("thinking");
-            clientRef.current?.muteMic();
+            // No muteMic — barge-in is allowed
             addMessage({ id: crypto.randomUUID(), role: "assistant", content: "", timestamp: new Date().toISOString(), source: "voice" });
 
-            const playerPromise = (async () => {
-                while (queue.length === 0 && !streamDone) {
-                    await new Promise((r) => setTimeout(r, 30));
-                }
-                await runPlayer();
-            })();
+            const playerPromise = runPlayer();
 
             const rawResponse = await sendToChat(userText, (sentence: string) => {
                 let clean = sentence;
@@ -147,7 +133,7 @@ export function useVoiceSession() {
                 queue.push({ text: clean, blobPromise: prefetchEdgeTTS(clean, voice) });
             });
 
-            streamDone = true;
+            queue.finish();
             await playerPromise;
 
             const cleanText = cleanResponseText(rawResponse);
@@ -183,28 +169,33 @@ export function useVoiceSession() {
                 useNotificationStore.getState().addNotification(`Ошибка: ${(err as Error).message}`, "error");
             }
         } finally {
-            streamDone = true;
+            queue.finish();
             isProcessingRef.current = false;
-            clientRef.current?.unmuteMic();
+            // No unmuteMic — mic stays open for barge-in
             if (clientRef.current) setOrbState("listening");
         }
     }, [userId, addMessage, updateLastAssistantMessage, setOrbState, sendToChat, playBlob]);
 
-    // ── Hot-swap TTS provider ──
+    // ── Hot-swap TTS provider or voice ──
     useEffect(() => {
-        const unsub = useSettingsStore.subscribe(
+        const onSwap = () => {
+            cleanupTTS();
+            if ("speechSynthesis" in window) {
+                const warmup = new SpeechSynthesisUtterance(" ");
+                warmup.volume = 0;
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(warmup);
+            }
+        };
+        const unsub1 = useSettingsStore.subscribe(
             (s) => s.ttsProvider,
-            () => {
-                cleanupTTS();
-                if ("speechSynthesis" in window) {
-                    const warmup = new SpeechSynthesisUtterance(" ");
-                    warmup.volume = 0;
-                    window.speechSynthesis.cancel();
-                    window.speechSynthesis.speak(warmup);
-                }
-            },
+            onSwap,
         );
-        return () => unsub();
+        const unsub2 = useSettingsStore.subscribe(
+            (s) => s.edgeTtsVoice,
+            onSwap,
+        );
+        return () => { unsub1(); unsub2(); };
     }, [cleanupTTS]);
 
     // ── Start voice session ──
@@ -212,18 +203,32 @@ export function useVoiceSession() {
         if (clientRef.current) return;
 
         const voiceMode = useSettingsStore.getState().voiceMode;
-        const useYandex = voiceMode === "yandex";
 
-        if (useYandex) {
+        // Determine which STT client to use
+        let sttKind: "local" | "browser" | "yandex";
+        if (voiceMode === "yandex") {
             const available = await YandexSttClient.isAvailable();
             if (!available) {
                 useNotificationStore.getState().addNotification("Yandex STT не настроен. Проверьте YANDEX_OAUTH_TOKEN", "error");
                 return;
             }
+            sttKind = "yandex";
+        } else if (voiceMode === "browser") {
+            if (!BrowserSttClient.isAvailable()) {
+                useNotificationStore.getState().addNotification("Web Speech API не поддерживается в этом браузере", "error");
+                return;
+            }
+            sttKind = "browser";
         } else {
-            const available = await LocalVoiceClient.isAvailable();
-            if (!available) {
-                useNotificationStore.getState().addNotification("Local Core не запущен. Запустите local_core: python main.py", "error");
+            // "cloud" or "local" — try Local Core first, fallback to browser
+            const localOk = await LocalVoiceClient.isAvailable();
+            if (localOk) {
+                sttKind = "local";
+            } else if (BrowserSttClient.isAvailable()) {
+                sttKind = "browser";
+                useNotificationStore.getState().addNotification("Local Core не найден — используется браузерный STT", "info");
+            } else {
+                useNotificationStore.getState().addNotification("Local Core не запущен и браузерный STT недоступен", "error");
                 return;
             }
         }
@@ -274,10 +279,11 @@ export function useVoiceSession() {
                 if (!isProcessingRef.current && interimText.trim()) setOrbState("thinking");
             },
             onStatusChange: (status) => {
+                const label = sttKind === "yandex" ? "Yandex" : sttKind === "browser" ? "Browser" : "Local";
                 if (status === "ready") {
-                    logger.info("[Voice] Local STT connected");
+                    logger.info(`[Voice] ${label} STT connected`);
                 } else if (status === "error") {
-                    logger.error("[Voice] STT connection error");
+                    logger.error(`[Voice] ${label} STT connection error`);
                     useNotificationStore.getState().addNotification("Ошибка подключения к STT", "error");
                 }
             },
@@ -287,7 +293,14 @@ export function useVoiceSession() {
             },
         };
 
-        const client = useYandex ? new YandexSttClient(callbacks) : new LocalVoiceClient(callbacks);
+        let client: LocalVoiceClient | YandexSttClient | BrowserSttClient;
+        if (sttKind === "yandex") {
+            client = new YandexSttClient(callbacks);
+        } else if (sttKind === "browser") {
+            client = new BrowserSttClient(callbacks);
+        } else {
+            client = new LocalVoiceClient(callbacks);
+        }
         clientRef.current = client;
 
         try {
@@ -300,7 +313,8 @@ export function useVoiceSession() {
 
             await client.start();
             setIsVoiceActive(true);
-            startRecognition();
+            // Only start browser speech recognition as live-transcript overlay for non-browser STT
+            if (sttKind !== "browser") startRecognition();
 
             const micStream = client.getStream();
             if (micStream) {
@@ -328,7 +342,8 @@ export function useVoiceSession() {
             };
             audioLevelRafRef.current = requestAnimationFrame(meterLoop);
 
-            logger.info(`[Voice] Session started (${useYandex ? "Yandex" : "Local"} STT + LLM + EdgeTTS sentence streaming)`);
+            const labels = { local: "Local", browser: "Browser", yandex: "Yandex" };
+            logger.info(`[Voice] Session started (${labels[sttKind]} STT + LLM + EdgeTTS sentence streaming)`);
         } catch (err) {
             logger.error("Failed to start voice:", err instanceof Error ? err.message : err);
             useNotificationStore.getState().addNotification(`Не удалось запустить голос: ${err instanceof Error ? err.message : "Ошибка"}`, "error");

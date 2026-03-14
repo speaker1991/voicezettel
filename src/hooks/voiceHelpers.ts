@@ -14,6 +14,53 @@ export interface SentenceJob {
 }
 
 /**
+ * Async-iterable queue. Consumers block on `for await` until items are pushed.
+ * No polling — uses Promise resolve callbacks for instant wakeup.
+ */
+export class AsyncQueue<T> {
+    private buffer: T[] = [];
+    private waiting: ((value: IteratorResult<T>) => void) | null = null;
+    private finished = false;
+
+    /** Add an item — wakes any waiting consumer immediately */
+    push(item: T): void {
+        if (this.waiting) {
+            const resolve = this.waiting;
+            this.waiting = null;
+            resolve({ value: item, done: false });
+        } else {
+            this.buffer.push(item);
+        }
+    }
+
+    /** Signal no more items will be pushed */
+    finish(): void {
+        this.finished = true;
+        if (this.waiting) {
+            const resolve = this.waiting;
+            this.waiting = null;
+            resolve({ value: undefined as unknown as T, done: true });
+        }
+    }
+
+    async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+        while (true) {
+            if (this.buffer.length > 0) {
+                yield this.buffer.shift()!;
+                continue;
+            }
+            if (this.finished) return;
+            // Wait for next push or finish
+            const result = await new Promise<IteratorResult<T>>((resolve) => {
+                this.waiting = resolve;
+            });
+            if (result.done) return;
+            yield result.value;
+        }
+    }
+}
+
+/**
  * Pre-fetch EdgeTTS audio for a sentence.
  * Returns a Blob or null on failure. Does NOT play anything.
  */
