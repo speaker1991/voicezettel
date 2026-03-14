@@ -10,6 +10,32 @@ export function VoiceSection() {
 
     return (
         <>
+            {/* STT Provider */}
+            <section className="mb-6">
+                <h3 className="mb-3 text-sm font-semibold text-zinc-400">
+                    STT движок
+                </h3>
+                <div className="flex gap-2">
+                    {([
+                        { value: "local" as const, label: "🖥 Local Core", desc: "GPU (faster-whisper)" },
+                        { value: "yandex" as const, label: "☁️ Yandex STT", desc: "Облако" },
+                    ] as const).map((opt) => (
+                        <button
+                            key={opt.value}
+                            className={`flex-1 rounded-lg border px-3 py-2 text-left transition-colors ${
+                                settings.voiceMode === opt.value
+                                    ? "border-violet-500/50 bg-violet-500/10 text-violet-300"
+                                    : "border-white/5 bg-zinc-800/50 text-zinc-400 hover:text-zinc-200"
+                            }`}
+                            onClick={() => settings.setVoiceMode(opt.value)}
+                        >
+                            <span className="block text-xs font-medium">{opt.label}</span>
+                            <span className="block text-[10px] text-zinc-500">{opt.desc}</span>
+                        </button>
+                    ))}
+                </div>
+            </section>
+
             {/* Voice Mode — Lavalier */}
             <section className="mb-6">
                 <h3 className="mb-3 text-sm font-semibold text-zinc-400">

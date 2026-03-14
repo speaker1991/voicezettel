@@ -5,6 +5,7 @@ import {
     LocalVoiceClient,
     type LocalVoiceCallbacks,
 } from "@/lib/localVoiceClient";
+import { YandexSttClient } from "@/lib/yandexSttClient";
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useAnimationStore } from "@/stores/animationStore";
@@ -29,7 +30,7 @@ import {
  * Flow: Mic → WebSocket → faster-whisper → /api/chat (stream) → EdgeTTS per sentence
  */
 export function useVoiceSession() {
-    const clientRef = useRef<LocalVoiceClient | null>(null);
+    const clientRef = useRef<LocalVoiceClient | YandexSttClient | null>(null);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
     const { userId } = useUser();
 
@@ -210,10 +211,21 @@ export function useVoiceSession() {
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
 
-        const available = await LocalVoiceClient.isAvailable();
-        if (!available) {
-            useNotificationStore.getState().addNotification("Local Core не запущен. Запустите local_core: python main.py", "error");
-            return;
+        const voiceMode = useSettingsStore.getState().voiceMode;
+        const useYandex = voiceMode === "yandex";
+
+        if (useYandex) {
+            const available = await YandexSttClient.isAvailable();
+            if (!available) {
+                useNotificationStore.getState().addNotification("Yandex STT не настроен. Проверьте YANDEX_OAUTH_TOKEN", "error");
+                return;
+            }
+        } else {
+            const available = await LocalVoiceClient.isAvailable();
+            if (!available) {
+                useNotificationStore.getState().addNotification("Local Core не запущен. Запустите local_core: python main.py", "error");
+                return;
+            }
         }
 
         setModality("voice");
@@ -275,7 +287,7 @@ export function useVoiceSession() {
             },
         };
 
-        const client = new LocalVoiceClient(callbacks);
+        const client = useYandex ? new YandexSttClient(callbacks) : new LocalVoiceClient(callbacks);
         clientRef.current = client;
 
         try {
@@ -316,7 +328,7 @@ export function useVoiceSession() {
             };
             audioLevelRafRef.current = requestAnimationFrame(meterLoop);
 
-            logger.info("[Voice] Session started (Local STT + LLM + EdgeTTS sentence streaming)");
+            logger.info(`[Voice] Session started (${useYandex ? "Yandex" : "Local"} STT + LLM + EdgeTTS sentence streaming)`);
         } catch (err) {
             logger.error("Failed to start voice:", err instanceof Error ? err.message : err);
             useNotificationStore.getState().addNotification(`Не удалось запустить голос: ${err instanceof Error ? err.message : "Ошибка"}`, "error");
