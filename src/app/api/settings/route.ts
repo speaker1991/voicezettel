@@ -1,10 +1,11 @@
+/**
+ * @module api/settings
+ * User settings storage via SQLite.
+ */
 import { NextRequest, NextResponse } from "next/server";
-import { readFile, writeFile, mkdir } from "fs/promises";
-import { join } from "path";
 import { z } from "zod";
+import { getDb } from "@/lib/db";
 import { logger } from "@/lib/logger";
-
-const DATA_DIR = join(process.cwd(), "data", "settings");
 
 const SaveSchema = z.object({
     userId: z.string().min(1),
@@ -13,7 +14,7 @@ const SaveSchema = z.object({
 
 /**
  * GET /api/settings?userId=xxx
- * Load user's settings from server.
+ * Load user's settings from SQLite.
  */
 export async function GET(req: NextRequest) {
     const userId = req.nextUrl.searchParams.get("userId");
@@ -21,20 +22,21 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    try {
-        const filePath = join(DATA_DIR, `${sanitize(userId)}.json`);
-        const raw = await readFile(filePath, "utf-8");
-        const settings = JSON.parse(raw) as Record<string, unknown>;
-        return NextResponse.json({ settings });
-    } catch {
-        // No saved settings — return empty
+    const db = getDb();
+    const row = db.prepare(
+        `SELECT data FROM settings WHERE user_id = ?`,
+    ).get(userId) as { data: string } | undefined;
+
+    if (!row) {
         return NextResponse.json({ settings: null });
     }
+
+    return NextResponse.json({ settings: JSON.parse(row.data) as Record<string, unknown> });
 }
 
 /**
  * POST /api/settings
- * Save user's settings to server.
+ * Save user's settings to SQLite.
  */
 export async function POST(req: NextRequest) {
     const raw: unknown = await req.json();
@@ -47,17 +49,15 @@ export async function POST(req: NextRequest) {
     const { userId, settings } = parsed.data;
 
     try {
-        await mkdir(DATA_DIR, { recursive: true });
-        const filePath = join(DATA_DIR, `${sanitize(userId)}.json`);
-        await writeFile(filePath, JSON.stringify(settings, null, 2), "utf-8");
+        const db = getDb();
+        db.prepare(
+            `INSERT INTO settings (user_id, data) VALUES (?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET data = excluded.data`,
+        ).run(userId, JSON.stringify(settings, null, 2));
+
         return NextResponse.json({ ok: true });
     } catch (err) {
         logger.error("Settings save error:", (err as Error).message);
         return NextResponse.json({ error: "Save failed" }, { status: 500 });
     }
-}
-
-/** Sanitize userId for filesystem safety */
-function sanitize(userId: string): string {
-    return userId.replace(/[^a-zA-Z0-9@._-]/g, "_").slice(0, 100);
 }
