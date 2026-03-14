@@ -27,6 +27,9 @@ jobs:
       - name: ESLint
         run: npm run lint
 
+      - name: Unit tests
+        run: npm run test:run
+
       - name: Build
         env:
           # Dummy secrets for build (NextAuth requires these)
