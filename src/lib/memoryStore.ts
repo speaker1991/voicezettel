@@ -215,3 +215,21 @@ export async function preloadFromVault(
 
     return added;
 }
+
+/**
+ * Delete a single memory by ID.
+ * @returns true if deleted, false if not found.
+ */
+export async function deleteMemory(
+    userId: string,
+    memoryId: string,
+): Promise<boolean> {
+    await ensureLoaded(userId);
+    const store = getStore(userId);
+    const deleted = store.delete(memoryId);
+    if (deleted) {
+        scheduleSave(userId);
+        logger.debug(`Memory [${userId}]: deleted ${memoryId}`);
+    }
+    return deleted;
+}

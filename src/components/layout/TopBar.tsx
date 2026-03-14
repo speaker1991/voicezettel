@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Menu, LogOut } from "lucide-react";
+import { Menu, LogOut, FileText } from "lucide-react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { NotesPanel } from "@/components/notes/NotesPanel";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 
 interface UserInfo {
@@ -87,6 +88,7 @@ function UserMenu({ user }: { user: UserInfo }) {
 
 export function TopBar({ user }: { user?: UserInfo | null }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   return (
     <>
@@ -113,6 +115,17 @@ export function TopBar({ user }: { user?: UserInfo | null }) {
           {/* Notifications bell */}
           <NotificationBell />
 
+          {/* Notes button */}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-zinc-400 hover:text-zinc-200"
+            aria-label="Мои заметки"
+            onClick={() => setNotesOpen(true)}
+          >
+            <FileText className="size-5" />
+          </Button>
+
           {/* Burger → opens settings */}
           <Button
             variant="ghost"
@@ -130,6 +143,11 @@ export function TopBar({ user }: { user?: UserInfo | null }) {
       <SettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+      />
+
+      <NotesPanel
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
       />
     </>
   );
