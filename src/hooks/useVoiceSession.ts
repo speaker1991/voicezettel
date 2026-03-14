@@ -287,22 +287,8 @@ export function useVoiceSession() {
         document.body.appendChild(audioEl);
         edgeTtsAudioElRef.current = audioEl;
 
-        // iOS: warm up <audio> element with silent WAV from user gesture context
-        try {
-            audioEl.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-            await audioEl.play().catch(() => { /* ignore */ });
-            audioEl.pause();
-            audioEl.removeAttribute("src");
-            console.log("[TTS] Audio element warmed up");
-        } catch { /* ignore */ }
-
-        // Detect iOS — createMediaElementSource hijacks audio on iOS when AudioContext is suspended
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-            (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-
         try {
             const ctx = new AudioContext();
-            // CRITICAL: Resume AudioContext — browsers require user gesture
             if (ctx.state === "suspended") {
                 await ctx.resume();
                 console.log("[TTS] AudioContext resumed from suspended state");
@@ -310,18 +296,14 @@ export function useVoiceSession() {
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
 
-            if (!isIOS) {
-                // Desktop: route audio through AudioContext for visualization
-                try {
-                    const source = ctx.createMediaElementSource(audioEl);
-                    source.connect(analyser);
-                    analyser.connect(ctx.destination);
-                } catch (srcErr) {
-                    console.warn("[TTS] createMediaElementSource failed:", srcErr);
-                }
-            } else {
-                // iOS: skip createMediaElementSource — audio plays directly via <audio> element
-                console.log("[TTS] iOS detected — skipping createMediaElementSource for reliable playback");
+            // Try to route audio through AudioContext for visualization
+            // If this fails (e.g. on some iOS versions), playback still works via <audio> directly
+            try {
+                const source = ctx.createMediaElementSource(audioEl);
+                source.connect(analyser);
+                analyser.connect(ctx.destination);
+            } catch {
+                console.warn("[Voice] createMediaElementSource failed — TTS will play without visualization");
             }
 
             ttsAudioCtxRef.current = ctx;
@@ -397,9 +379,13 @@ export function useVoiceSession() {
             const micStream = client.getStream();
             if (micStream) {
                 try {
-                    const micCtx = new AudioContext();
-                    const micSource = micCtx.createMediaStreamSource(micStream);
-                    const micAnalyser = micCtx.createAnalyser();
+                    // Reuse TTS AudioContext instead of creating another one (iOS has limits)
+                    const ctx = ttsAudioCtxRef.current ?? new AudioContext();
+                    if (ctx.state === "suspended") {
+                        await ctx.resume();
+                    }
+                    const micSource = ctx.createMediaStreamSource(micStream);
+                    const micAnalyser = ctx.createAnalyser();
                     micAnalyser.fftSize = 256;
                     micSource.connect(micAnalyser);
                     micAnalyserRef.current = micAnalyser;
