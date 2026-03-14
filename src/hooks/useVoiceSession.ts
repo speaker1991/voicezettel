@@ -50,9 +50,7 @@ export function useVoiceSession() {
     // Refs for audio
     const isProcessingRef = useRef(false);
     const edgeTtsAudioElRef = useRef<HTMLAudioElement | null>(null);
-    const ttsAudioCtxRef = useRef<AudioContext | null>(null);
-    const ttsAnalyserRef = useRef<AnalyserNode | null>(null);
-    const ttsAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const micAudioCtxRef = useRef<AudioContext | null>(null);
     const audioLevelRafRef = useRef<number | null>(null);
     const micAnalyserRef = useRef<AnalyserNode | null>(null);
     const micAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
@@ -90,21 +88,28 @@ export function useVoiceSession() {
                 return;
             }
 
-            // Ensure AudioContext is running (browser autoplay policy)
-            if (ttsAudioCtxRef.current?.state === "suspended") {
-                console.log("[TTS] Resuming suspended AudioContext...");
-                ttsAudioCtxRef.current.resume().catch(() => { /* silent */ });
-            }
-
             const url = URL.createObjectURL(blob);
             audioEl.src = url;
             audioEl.volume = 1.0;
             console.log("[TTS] Playing blob:", blob.size, "bytes");
 
+            let resolved = false;
             const done = () => {
+                if (resolved) return;
+                resolved = true;
+                audioEl.ontimeupdate = null;
                 URL.revokeObjectURL(url);
                 console.log("[TTS] Playback done");
                 resolve();
+            };
+
+            // Simulate audio level for Orb visualization via timeupdate
+            audioEl.ontimeupdate = () => {
+                if (audioEl.duration > 0 && !audioEl.paused) {
+                    const t = audioEl.currentTime * 8;
+                    const level = 0.5 + 0.3 * Math.sin(t);
+                    setAudioLevel(level);
+                }
             };
 
             audioEl.onended = done;
@@ -125,10 +130,25 @@ export function useVoiceSession() {
             }).catch((err) => {
                 console.error("[TTS] play() rejected:", err);
                 clearTimeout(wd);
-                done();
+                // Fallback: try creating a new Audio object (works on some iOS versions)
+                try {
+                    console.log("[TTS] Trying fallback with new Audio()...");
+                    const fallbackAudio = new Audio(url);
+                    fallbackAudio.volume = 1.0;
+                    fallbackAudio.onended = () => { done(); };
+                    fallbackAudio.onerror = () => { done(); };
+                    fallbackAudio.play().then(() => {
+                        console.log("[TTS] Fallback play succeeded");
+                    }).catch((e2) => {
+                        console.error("[TTS] Fallback also failed:", e2);
+                        done();
+                    });
+                } catch {
+                    done();
+                }
             });
         });
-    }, []);
+    }, [setAudioLevel]);
 
     // ── Process one voice cycle ──
     const processVoiceCycle = useCallback(async (userText: string) => {
@@ -287,32 +307,11 @@ export function useVoiceSession() {
         document.body.appendChild(audioEl);
         edgeTtsAudioElRef.current = audioEl;
 
-        try {
-            const ctx = new AudioContext();
-            if (ctx.state === "suspended") {
-                await ctx.resume();
-                console.log("[TTS] AudioContext resumed from suspended state");
-            }
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 256;
-
-            // Try to route audio through AudioContext for visualization
-            // If this fails (e.g. on some iOS versions), playback still works via <audio> directly
-            try {
-                const source = ctx.createMediaElementSource(audioEl);
-                source.connect(analyser);
-                analyser.connect(ctx.destination);
-            } catch {
-                console.warn("[Voice] createMediaElementSource failed — TTS will play without visualization");
-            }
-
-            ttsAudioCtxRef.current = ctx;
-            ttsAnalyserRef.current = analyser;
-            ttsAnalyserDataRef.current = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
-            console.log("[TTS] AudioContext ready, state:", ctx.state);
-        } catch (err) {
-            console.warn("[TTS] AudioContext setup failed (non-critical):", err);
-        }
+        // Audio plays directly via <audio> element — no AudioContext routing.
+        // createMediaElementSource was removed: it hijacks audio output through
+        // AudioContext which stays suspended on iOS, causing silent playback.
+        // TTS visualization is handled via ontimeupdate in playBlob instead.
+        console.log("[TTS] Audio element ready (direct playback, no AudioContext routing)");
 
         let interimText = "";
 
@@ -379,11 +378,11 @@ export function useVoiceSession() {
             const micStream = client.getStream();
             if (micStream) {
                 try {
-                    // Reuse TTS AudioContext instead of creating another one (iOS has limits)
-                    const ctx = ttsAudioCtxRef.current ?? new AudioContext();
+                    const ctx = new AudioContext();
                     if (ctx.state === "suspended") {
                         await ctx.resume();
                     }
+                    micAudioCtxRef.current = ctx;
                     const micSource = ctx.createMediaStreamSource(micStream);
                     const micAnalyser = ctx.createAnalyser();
                     micAnalyser.fftSize = 256;
@@ -396,7 +395,7 @@ export function useVoiceSession() {
             const meterLoop = () => {
                 const orbSt = useChatStore.getState().orbState;
                 if (orbSt === "speaking") {
-                    setAudioLevel(getAudioLevel(ttsAnalyserRef.current, ttsAnalyserDataRef.current));
+                    // TTS audio level is set directly in playBlob via ontimeupdate
                 } else if (orbSt === "listening") {
                     setAudioLevel(getAudioLevel(micAnalyserRef.current, micAnalyserDataRef.current));
                 } else {
@@ -439,11 +438,9 @@ export function useVoiceSession() {
         }
         setAudioLevel(0);
 
-        if (ttsAudioCtxRef.current) {
-            ttsAudioCtxRef.current.close().catch(() => { /* silent */ });
-            ttsAudioCtxRef.current = null;
-            ttsAnalyserRef.current = null;
-            ttsAnalyserDataRef.current = null;
+        if (micAudioCtxRef.current) {
+            micAudioCtxRef.current.close().catch(() => { /* silent */ });
+            micAudioCtxRef.current = null;
         }
 
         isProcessingRef.current = false;
