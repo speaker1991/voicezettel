@@ -1,7 +1,13 @@
+/**
+ * @module providers/base
+ * Shared types, interfaces, and helpers for all LLM providers.
+ */
+
 import { logger } from "@/lib/logger";
 
 // ── Shared types for LLM providers ──
 
+/** A single chat message with role (system/user/assistant) and content. */
 export interface ChatMessage {
     role: string;
     content: string;

@@ -1,3 +1,7 @@
+/**
+ * @module providers/deepseek
+ * DeepSeek provider (OpenAI-compatible API) with streaming and function calling support.
+ */
 import { type ChatMessage, type ToolCall, type ToolCallResult, type LLMProvider, type LLMProviderWithTools, logger } from "./base";
 import { MEMORY_TOOLS, handleToolCalls } from "@/lib/chatTools";
 

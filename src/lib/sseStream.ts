@@ -1,3 +1,11 @@
+/**
+ * @module sseStream
+ * SSE response creation and post-processing.
+ *
+ * Two modes:
+ * - **Voice**: zero-buffering passthrough for low-latency TTS playback.
+ * - **Text**: full buffering → DSML detection → function execution → counter tags.
+ */
 import { logger } from "@/lib/logger";
 import { parseDSMLCalls, hasDSML, extractTextBeforeDSML } from "@/lib/parseDSML";
 import {

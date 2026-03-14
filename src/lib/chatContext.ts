@@ -1,3 +1,8 @@
+/**
+ * @module chatContext
+ * Context-building utilities for the chat API.
+ * Assembles memory, vault notes, and ChromaDB RAG into the system prompt.
+ */
 import {
     getRecentMemories,
     searchMemories,
@@ -19,6 +24,11 @@ interface ChromaResult {
     relevance_pct: number;
 }
 
+/**
+ * Query ChromaDB (via Local Core) for semantically relevant vault notes.
+ * Returns formatted context string or empty string on failure.
+ * Timeout: 1500ms to avoid blocking the main response.
+ */
 export async function fetchChromaContext(query: string): Promise<string> {
     try {
         const res = await fetch(`${LOCAL_CORE_URL}/api/memory/search`, {
@@ -51,6 +61,12 @@ export async function fetchChromaContext(query: string): Promise<string> {
 
 // ── Build memory context ─────────────────────────────────────
 
+/**
+ * Build memory context from recent + semantically relevant memories.
+ * @param userId - User identifier for memory isolation.
+ * @param userMessage - Current user message for semantic search.
+ * @returns Formatted memory context string to embed in system prompt.
+ */
 export async function buildMemoryContext(
     userId: string,
     userMessage: string,
@@ -142,6 +158,10 @@ export interface EnrichPromptOptions {
     chromaContext: string;
 }
 
+/**
+ * Assemble the final system prompt with provider-specific rules,
+ * memory context, vault context, and ChromaDB RAG context.
+ */
 export function buildEnrichedPrompt(opts: EnrichPromptOptions): string {
     let prompt = opts.systemPrompt;
 
@@ -174,6 +194,10 @@ export function buildEnrichedPrompt(opts: EnrichPromptOptions): string {
 
 // ── Preload vault notes (first-time setup) ───────────────────
 
+/**
+ * Ensure the user's Obsidian vault notes are preloaded into the memory store.
+ * Runs once per session — idempotent check via getRecentMemories.
+ */
 export async function ensureVaultPreloaded(userId: string): Promise<void> {
     const memCount = await getRecentMemories(userId, 1);
     if (memCount.length === 0) {
@@ -186,6 +210,10 @@ export async function ensureVaultPreloaded(userId: string): Promise<void> {
 
 // ── Auto-save user message to memory ─────────────────────────
 
+/**
+ * Fire-and-forget: persist the user's latest message to long-term memory.
+ * Only saves messages longer than 10 characters.
+ */
 export function autoSaveUserMessage(
     userId: string,
     messages: Array<{ role: string; content: string }>,

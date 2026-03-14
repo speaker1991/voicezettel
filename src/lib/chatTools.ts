@@ -1,3 +1,8 @@
+/**
+ * @module chatTools
+ * Function calling tool definitions and execution handler.
+ * Tools: save_memory, search_memory, create_zettel.
+ */
 import { logger } from "@/lib/logger";
 import {
     saveMemory,
@@ -8,6 +13,10 @@ import type { ToolCall } from "@/lib/providers/base";
 
 // ── Function calling tool definitions ────────────────────────
 
+/**
+ * OpenAI-format tool definitions for function calling.
+ * Sent to providers that support `tool_choice: "auto"`.
+ */
 export const MEMORY_TOOLS = [
     {
         type: "function" as const,
@@ -107,6 +116,15 @@ export const MEMORY_TOOLS = [
 
 // ── Execute tool calls ───────────────────────────────────────
 
+/**
+ * Execute an array of tool calls returned by the LLM.
+ * Each tool call is dispatched to the appropriate handler
+ * (saveMemory, searchMemories, writeNoteToVault).
+ *
+ * @param userId - User identifier for data isolation.
+ * @param toolCalls - Array of tool calls from the LLM response.
+ * @returns Array of tool result messages to send back to the LLM.
+ */
 export async function handleToolCalls(
     userId: string,
     toolCalls: ToolCall[],

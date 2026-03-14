@@ -1,3 +1,8 @@
+/**
+ * @module providers/google
+ * Google Gemini 2.0 Flash provider. Transforms Gemini SSE format
+ * to OpenAI-compatible SSE for unified downstream processing.
+ */
 import type { ChatMessage, LLMProvider } from "./base";
 
 const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
