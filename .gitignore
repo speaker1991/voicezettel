@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# user data (NEVER commit — contains PII, emails, conversations)
+data/memory_*.json
+data/chat_*.json
+data/tokens_*.json
+data/settings/*.json
+data/logs/*.json
+data/*.db
