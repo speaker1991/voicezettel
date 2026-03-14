@@ -1,17 +1,32 @@
 {
     "name": "VoiceZettel",
     "short_name": "VoiceZettel",
-    "description": "Voice-first Zettelkasten with AI",
+    "description": "Voice-first Zettelkasten с AI — голосовой помощник для Obsidian",
     "start_url": "/",
     "display": "standalone",
+    "orientation": "portrait",
     "background_color": "#09090b",
     "theme_color": "#7c3aed",
+    "categories": ["productivity", "education"],
     "icons": [
         {
             "src": "/icon-512.png",
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "any maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Голосовой режим",
+            "short_name": "Голос",
+            "url": "/?mode=voice",
+            "icons": [
+                {
+                    "src": "/icon-512.png",
+                    "sizes": "512x512"
+                }
+            ]
         }
     ]
 }
