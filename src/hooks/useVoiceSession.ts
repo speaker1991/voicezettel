@@ -198,7 +198,7 @@ export function useVoiceSession() {
                 clean = clean.replace(/\[COUNTER:\w+\]/gi, "");
                 clean = clean.trim();
                 console.log("[TTS] Sentence detected:", clean.slice(0, 50), "length:", clean.length);
-                if (clean.length < 3) return;
+                if (clean.length < 2) return;
                 queue.push({ text: clean, blobPromise: prefetchEdgeTTS(clean, voice) });
             });
             console.log("[TTS] Stream finished, raw response length:", rawResponse.length);
@@ -305,6 +305,15 @@ export function useVoiceSession() {
 
         setModality("voice");
         setOrbState("listening");
+
+        // Warmup TTS connection — first request creates WebSocket to Microsoft servers (~200-400ms)
+        // Do this in background so it's ready when first sentence arrives
+        const warmupVoice = useSettingsStore.getState().edgeTtsVoice;
+        fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: " ", voice: warmupVoice }),
+        }).catch(() => { /* warmup failed, not critical */ });
 
         const audioEl = document.createElement("audio");
         audioEl.setAttribute("playsinline", "true");

@@ -110,17 +110,51 @@ export function useChatStream() {
                         if (!inDsml) {
                             sentenceBuffer += content;
 
-                            // Detect sentence boundaries: .!?… followed by space or newline
+                            // Aggressive sentence detection for low-latency TTS:
+                            // 1. Standard sentence endings: .!?…
+                            // 2. Clause breaks: , ; : — (only if buffer is long enough)
+                            // 3. Newlines
                             const sentenceEnd = /[.!?…]+[\s\n]+/;
+                            const clauseBreak = /[,;:—–]\s+/;
+                            const newlineBreak = /\n/;
+
+                            let flushed = false;
+                            // First: try standard sentence boundaries
                             let match = sentenceEnd.exec(sentenceBuffer);
                             while (match) {
                                 const idx = match.index + match[0].length;
                                 const sentence = sentenceBuffer.slice(0, idx).trim();
-                                if (sentence.length > 5) {
+                                if (sentence.length > 3) {
                                     onSentence(sentence);
+                                    flushed = true;
                                 }
                                 sentenceBuffer = sentenceBuffer.slice(idx);
                                 match = sentenceEnd.exec(sentenceBuffer);
+                            }
+
+                            // Second: if buffer is getting long and has a clause break, flush
+                            if (!flushed && sentenceBuffer.length > 40) {
+                                const cm = clauseBreak.exec(sentenceBuffer);
+                                if (cm && cm.index > 10) {
+                                    const idx = cm.index + cm[0].length;
+                                    const clause = sentenceBuffer.slice(0, idx).trim();
+                                    if (clause.length > 10) {
+                                        onSentence(clause);
+                                    }
+                                    sentenceBuffer = sentenceBuffer.slice(idx);
+                                }
+                            }
+
+                            // Third: flush on newline
+                            if (!flushed) {
+                                const nm = newlineBreak.exec(sentenceBuffer);
+                                if (nm && nm.index > 3) {
+                                    const clause = sentenceBuffer.slice(0, nm.index).trim();
+                                    if (clause.length > 3) {
+                                        onSentence(clause);
+                                    }
+                                    sentenceBuffer = sentenceBuffer.slice(nm.index + 1);
+                                }
                             }
                         }
                     }
