@@ -73,15 +73,25 @@ export async function prefetchEdgeTTS(text: string, voice: string): Promise<Blob
             .replace(/[*_#>`~]/g, "")
             .replace(/\s{2,}/g, " ")
             .trim();
-        if (!clean || clean.length < 2) return null;
+        if (!clean || clean.length < 2) {
+            console.warn("[TTS] Text too short after cleanup, skipping:", JSON.stringify(text));
+            return null;
+        }
+        console.log("[TTS] Fetching audio for:", clean.slice(0, 50), "voice:", voice);
         const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: clean, voice }),
         });
-        if (!res.ok) return null;
-        return await res.blob();
-    } catch {
+        if (!res.ok) {
+            console.error("[TTS] /api/tts returned error:", res.status, await res.text().catch(() => ""));
+            return null;
+        }
+        const blob = await res.blob();
+        console.log("[TTS] Got audio blob:", blob.size, "bytes, type:", blob.type);
+        return blob;
+    } catch (err) {
+        console.error("[TTS] prefetchEdgeTTS error:", err);
         return null;
     }
 }

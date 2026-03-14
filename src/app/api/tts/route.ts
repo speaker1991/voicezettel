@@ -41,6 +41,8 @@ export async function POST(req: NextRequest) {
         return new Response("Empty text", { status: 400 });
     }
 
+    console.log("[TTS API] Request:", text.slice(0, 50), "voice:", voice);
+
     try {
         const selectedVoice = voice ?? DEFAULT_VOICE;
         const now = Date.now();
@@ -67,6 +69,7 @@ export async function POST(req: NextRequest) {
         }
 
         const { audioStream } = cached.tts.toStream(text.slice(0, 5000));
+        console.log("[TTS API] Stream created for:", text.slice(0, 30));
 
         // Stream audio directly to client (no buffering = lower latency)
         const readableStream = new ReadableStream({
@@ -96,6 +99,7 @@ export async function POST(req: NextRequest) {
         // Remove broken cached instance
         const selectedVoice = voice ?? DEFAULT_VOICE;
         ttsCache.delete(selectedVoice);
+        console.error("[TTS API] Error:", (err as Error).message, (err as Error).stack?.slice(0, 200));
         logger.error("Edge TTS error:", (err as Error).message);
         return new Response("TTS error", { status: 500 });
     }

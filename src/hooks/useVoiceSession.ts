@@ -84,19 +84,49 @@ export function useVoiceSession() {
     const playBlob = useCallback((blob: Blob): Promise<void> => {
         return new Promise<void>((resolve) => {
             const audioEl = edgeTtsAudioElRef.current;
-            if (!audioEl) { resolve(); return; }
+            if (!audioEl) {
+                console.warn("[TTS] No audio element, skipping playback");
+                resolve();
+                return;
+            }
+
+            // Ensure AudioContext is running (browser autoplay policy)
+            if (ttsAudioCtxRef.current?.state === "suspended") {
+                console.log("[TTS] Resuming suspended AudioContext...");
+                ttsAudioCtxRef.current.resume().catch(() => { /* silent */ });
+            }
 
             const url = URL.createObjectURL(blob);
             audioEl.src = url;
-            const done = () => { URL.revokeObjectURL(url); resolve(); };
+            audioEl.volume = 1.0;
+            console.log("[TTS] Playing blob:", blob.size, "bytes");
+
+            const done = () => {
+                URL.revokeObjectURL(url);
+                console.log("[TTS] Playback done");
+                resolve();
+            };
 
             audioEl.onended = done;
-            audioEl.onerror = done;
+            audioEl.onerror = (e) => {
+                console.error("[TTS] Audio playback error:", e);
+                done();
+            };
 
-            const wd = setTimeout(() => { audioEl.pause(); done(); }, 20000);
+            const wd = setTimeout(() => {
+                console.warn("[TTS] Playback watchdog fired (20s)");
+                audioEl.pause();
+                done();
+            }, 20000);
+
             audioEl.play().then(() => {
+                console.log("[TTS] Play started, duration:", audioEl.duration);
                 audioEl.onended = () => { clearTimeout(wd); done(); };
-            }).catch(() => { clearTimeout(wd); done(); });
+            }).catch((err) => {
+                console.error("[TTS] play() rejected:", err);
+                clearTimeout(wd);
+                done();
+            });
         });
     }, []);
 
@@ -109,10 +139,18 @@ export function useVoiceSession() {
 
         const runPlayer = async () => {
             setOrbState("speaking");
+            let count = 0;
             for await (const job of queue) {
+                count++;
+                console.log(`[TTS] Playing sentence #${count}: "${job.text.slice(0, 40)}..."`);
                 const blob = await job.blobPromise;
-                if (blob && blob.size > 0) await playBlob(blob);
+                if (blob && blob.size > 0) {
+                    await playBlob(blob);
+                } else {
+                    console.warn(`[TTS] Sentence #${count} got null/empty blob`);
+                }
             }
+            console.log(`[TTS] Player done, played ${count} sentences`);
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -129,9 +167,11 @@ export function useVoiceSession() {
                 let clean = sentence;
                 clean = clean.replace(/<\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[^>]*>[\s\S]*?(?:<\s*\/[^>]*>|$)/gi, "");
                 clean = clean.trim();
+                console.log("[TTS] Sentence detected:", clean.slice(0, 50), "length:", clean.length);
                 if (clean.length < 3) return;
                 queue.push({ text: clean, blobPromise: prefetchEdgeTTS(clean, voice) });
             });
+            console.log("[TTS] Stream finished, raw response length:", rawResponse.length);
 
             queue.finish();
             await playerPromise;
@@ -244,6 +284,11 @@ export function useVoiceSession() {
 
         try {
             const ctx = new AudioContext();
+            // CRITICAL: Resume AudioContext — browsers require user gesture
+            if (ctx.state === "suspended") {
+                await ctx.resume();
+                console.log("[TTS] AudioContext resumed from suspended state");
+            }
             const source = ctx.createMediaElementSource(audioEl);
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
@@ -252,7 +297,10 @@ export function useVoiceSession() {
             ttsAudioCtxRef.current = ctx;
             ttsAnalyserRef.current = analyser;
             ttsAnalyserDataRef.current = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
-        } catch { /* Non-critical */ }
+            console.log("[TTS] AudioContext ready, state:", ctx.state);
+        } catch (err) {
+            console.warn("[TTS] AudioContext setup failed (non-critical):", err);
+        }
 
         let interimText = "";
 
