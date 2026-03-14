@@ -146,8 +146,13 @@ export function useVoiceSession() {
                 const blob = await job.blobPromise;
                 if (blob && blob.size > 0) {
                     await playBlob(blob);
+                } else if (job.text.length > 2 && "speechSynthesis" in window) {
+                    // Fallback: use browser native TTS if EdgeTTS returned nothing
+                    console.warn(`[TTS] Sentence #${count} got null/empty blob — falling back to speechSynthesis`);
+                    const { speakWithBrowserTTS } = await import("@/hooks/voiceHelpers");
+                    await speakWithBrowserTTS(job.text);
                 } else {
-                    console.warn(`[TTS] Sentence #${count} got null/empty blob`);
+                    console.warn(`[TTS] Sentence #${count} got null/empty blob, no fallback available`);
                 }
             }
             console.log(`[TTS] Player done, played ${count} sentences`);
@@ -282,6 +287,19 @@ export function useVoiceSession() {
         document.body.appendChild(audioEl);
         edgeTtsAudioElRef.current = audioEl;
 
+        // iOS: warm up <audio> element with silent WAV from user gesture context
+        try {
+            audioEl.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+            await audioEl.play().catch(() => { /* ignore */ });
+            audioEl.pause();
+            audioEl.removeAttribute("src");
+            console.log("[TTS] Audio element warmed up");
+        } catch { /* ignore */ }
+
+        // Detect iOS — createMediaElementSource hijacks audio on iOS when AudioContext is suspended
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
         try {
             const ctx = new AudioContext();
             // CRITICAL: Resume AudioContext — browsers require user gesture
@@ -289,11 +307,23 @@ export function useVoiceSession() {
                 await ctx.resume();
                 console.log("[TTS] AudioContext resumed from suspended state");
             }
-            const source = ctx.createMediaElementSource(audioEl);
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
-            source.connect(analyser);
-            analyser.connect(ctx.destination);
+
+            if (!isIOS) {
+                // Desktop: route audio through AudioContext for visualization
+                try {
+                    const source = ctx.createMediaElementSource(audioEl);
+                    source.connect(analyser);
+                    analyser.connect(ctx.destination);
+                } catch (srcErr) {
+                    console.warn("[TTS] createMediaElementSource failed:", srcErr);
+                }
+            } else {
+                // iOS: skip createMediaElementSource — audio plays directly via <audio> element
+                console.log("[TTS] iOS detected — skipping createMediaElementSource for reliable playback");
+            }
+
             ttsAudioCtxRef.current = ctx;
             ttsAnalyserRef.current = analyser;
             ttsAnalyserDataRef.current = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;

@@ -126,3 +126,28 @@ export function getAudioLevel(
     }
     return Math.min(sum / (dataArray.length * 128), 1);
 }
+
+/**
+ * Fallback TTS using browser-native Speech Synthesis.
+ * Used when EdgeTTS server is unavailable.
+ */
+export function speakWithBrowserTTS(text: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+        if (!("speechSynthesis" in window)) {
+            resolve();
+            return;
+        }
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "ru-RU";
+        utterance.rate = 1.1;
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+
+        // iOS Safari sometimes needs a cancel before speak
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+
+        // Watchdog: resolve after 15s even if onend never fires (iOS bug)
+        setTimeout(resolve, 15000);
+    });
+}

@@ -43,13 +43,26 @@ export function OrbArea() {
         return () => clearTimeout(timer);
     }, []);
 
-    const handleOrbClick = useCallback(() => {
+    const handleOrbClick = useCallback(async () => {
         warmUpAudio();
+
+        // iOS: resume/create AudioContext from direct user gesture
+        // This must happen synchronously in the click handler before any awaits
+        if (typeof AudioContext !== "undefined") {
+            try {
+                const tempCtx = new AudioContext();
+                if (tempCtx.state === "suspended") {
+                    await tempCtx.resume();
+                }
+                tempCtx.close().catch(() => { /* silent */ });
+            } catch { /* ignore */ }
+        }
+
         setShowHint(false);
         if (isVoiceActive) {
             stopVoice();
         } else {
-            startVoice();
+            await startVoice();
         }
     }, [isVoiceActive, startVoice, stopVoice]);
 
