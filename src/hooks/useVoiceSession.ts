@@ -190,7 +190,12 @@ export function useVoiceSession() {
 
             const rawResponse = await sendToChat(userText, (sentence: string) => {
                 let clean = sentence;
+                // Remove any DSML/function_call tags and their content
                 clean = clean.replace(/<\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[^>]*>[\s\S]*?(?:<\s*\/[^>]*>|$)/gi, "");
+                // Also catch pipe-separated DSML format: < | DSML | ...
+                clean = clean.replace(/<\s*\|\s*DSML[\s\S]*/gi, "");
+                // Remove counter tags
+                clean = clean.replace(/\[COUNTER:\w+\]/gi, "");
                 clean = clean.trim();
                 console.log("[TTS] Sentence detected:", clean.slice(0, 50), "length:", clean.length);
                 if (clean.length < 3) return;

@@ -100,21 +100,28 @@ export function useChatStream() {
                     const content = parsed.choices?.[0]?.delta?.content;
                     if (content) {
                         accumulated += content;
-                        sentenceBuffer += content;
                         // Strip DSML in real-time so chat bubble never shows tags
                         updateLastAssistantMessage({ content: stripDSML(accumulated) });
 
-                        // Detect sentence boundaries: .!?… followed by space or newline
-                        const sentenceEnd = /[.!?…]+[\s\n]+/;
-                        let match = sentenceEnd.exec(sentenceBuffer);
-                        while (match) {
-                            const idx = match.index + match[0].length;
-                            const sentence = sentenceBuffer.slice(0, idx).trim();
-                            if (sentence.length > 5) {
-                                onSentence(sentence);
+                        // Check if we've entered a DSML block — stop feeding sentences to TTS
+                        const dsmlStartPattern = /<\s*\|?\s*(?:DSML|function_calls?|antml|invoke)/i;
+                        const inDsml = dsmlStartPattern.test(accumulated);
+
+                        if (!inDsml) {
+                            sentenceBuffer += content;
+
+                            // Detect sentence boundaries: .!?… followed by space or newline
+                            const sentenceEnd = /[.!?…]+[\s\n]+/;
+                            let match = sentenceEnd.exec(sentenceBuffer);
+                            while (match) {
+                                const idx = match.index + match[0].length;
+                                const sentence = sentenceBuffer.slice(0, idx).trim();
+                                if (sentence.length > 5) {
+                                    onSentence(sentence);
+                                }
+                                sentenceBuffer = sentenceBuffer.slice(idx);
+                                match = sentenceEnd.exec(sentenceBuffer);
                             }
-                            sentenceBuffer = sentenceBuffer.slice(idx);
-                            match = sentenceEnd.exec(sentenceBuffer);
                         }
                     }
                 } catch {
@@ -123,10 +130,10 @@ export function useChatStream() {
             }
         }
 
-        // Flush remaining text as final sentence
-        const remaining = sentenceBuffer.trim();
-        if (remaining.length > 2) {
-            onSentence(remaining);
+        // Flush remaining text as final sentence (strip any DSML that leaked in)
+        const cleanRemaining = stripDSML(sentenceBuffer).trim();
+        if (cleanRemaining.length > 2) {
+            onSentence(cleanRemaining);
         }
 
         // Report token usage
