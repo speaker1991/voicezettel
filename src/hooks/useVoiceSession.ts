@@ -188,37 +188,30 @@ export function useVoiceSession() {
         const runPlayer = async () => {
             setOrbState("speaking");
             isSpeakingRef.current = true;
-            console.log("[TTS] Speaking started");
+            // Mute STT for the entire speaking duration — prevents self-hearing.
+            // Barge-in is only possible via Orb tap (interruptSpeaking).
+            pauseSTT();
+            console.log("[TTS] Speaking started — STT paused, tap Orb to interrupt");
             let count = 0;
             for await (const job of queue) {
-                if (!isSpeakingRef.current) break; // barge-in already happened
+                if (!isSpeakingRef.current) break;
                 count++;
                 console.log(`[TTS] Playing sentence #${count}: "${job.text.slice(0, 40)}..."`);
                 const blob = await job.blobPromise;
-                if (!isSpeakingRef.current) break; // barge-in during fetch
+                if (!isSpeakingRef.current) break;
                 if (blob && blob.size > 0) {
-                    pauseSTT(); // Stop STT before playing audio — prevents self-hearing
                     await playBlob(blob);
-                    if (isSpeakingRef.current) {
-                        resumeSTT(); // Resume STT between sentences — allows barge-in
-                        await new Promise(r => setTimeout(r, 250)); // let STT pick up user voice
-                    }
                 } else if (job.text.length > 2 && "speechSynthesis" in window) {
                     console.warn(`[TTS] Sentence #${count} got null/empty blob — falling back to speechSynthesis`);
-                    pauseSTT();
                     const { speakWithBrowserTTS } = await import("@/hooks/voiceHelpers");
                     await speakWithBrowserTTS(job.text);
-                    if (isSpeakingRef.current) {
-                        resumeSTT();
-                        await new Promise(r => setTimeout(r, 250));
-                    }
                 } else {
                     console.warn(`[TTS] Sentence #${count} got null/empty blob, no fallback available`);
                 }
             }
             console.log(`[TTS] Player done, played ${count} sentences`);
             isSpeakingRef.current = false;
-            resumeSTT(); // Make sure STT is running after speaking ends
+            resumeSTT(); // Resume STT only after ALL speaking is done
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -375,27 +368,10 @@ export function useVoiceSession() {
 
         const callbacks: LocalVoiceCallbacks = {
             onTranscriptUser: (text: string, isFinal: boolean) => {
-                if (isSpeakingRef.current) {
-                    // STT is paused during blob playback and only active in gaps.
-                    // Any final transcript during speaking = real barge-in
-                    // (not echo, because STT was stopped during audio).
-                    if (!isFinal) return;
-                    const trimmed = text.trim();
-                    if (trimmed.length < 2) return;
-                    console.log(`[Voice] Barge-in detected: "${trimmed.slice(0, 40)}"`);
-                    abortRef.current?.abort();
-                    cleanupTTS();
-                    isSpeakingRef.current = false;
-                    isProcessingRef.current = false;
-                    // Finish the queue to unblock runPlayer's for-await loop
-                    if (activeQueueRef.current) {
-                        activeQueueRef.current.finish();
-                        activeQueueRef.current = null;
-                    }
-                    setLiveTranscript("");
-                    void processVoiceCycle(trimmed);
-                    return;
-                }
+                // Completely ignore ALL transcripts while assistant is speaking.
+                // STT is paused, but WebKit may still deliver buffered results.
+                // Barge-in is via Orb tap only (interruptSpeaking).
+                if (isSpeakingRef.current) return;
 
                 if (isFinal && text.trim().length > 0) {
                     setLiveTranscript("");
@@ -547,8 +523,10 @@ export function useVoiceSession() {
             activeQueueRef.current.finish();
             activeQueueRef.current = null;
         }
+        // Resume STT so user can speak
+        resumeSTT();
         setOrbState("listening");
-    }, [cleanupTTS, setOrbState, abortRef]);
+    }, [cleanupTTS, setOrbState, abortRef, resumeSTT]);
 
     return { isVoiceActive, startVoice, stopVoice, interruptSpeaking } as const;
 }
