@@ -86,21 +86,6 @@ export function useVoiceSession() {
         }
     }, []);
 
-    // ── Pause/Resume STT during TTS playback ──
-    const pauseSTT = useCallback(() => {
-        const client = clientRef.current;
-        if (client && "pauseRecognition" in client) {
-            (client as { pauseRecognition: () => void }).pauseRecognition();
-        }
-    }, []);
-
-    const resumeSTT = useCallback(() => {
-        const client = clientRef.current;
-        if (client && "resumeRecognition" in client) {
-            (client as { resumeRecognition: () => void }).resumeRecognition();
-        }
-    }, []);
-
     // ── Play a single audio blob ──
     const playBlob = useCallback((blob: Blob): Promise<void> => {
         return new Promise<void>((resolve) => {
@@ -188,10 +173,14 @@ export function useVoiceSession() {
         const runPlayer = async () => {
             setOrbState("speaking");
             isSpeakingRef.current = true;
-            // Mute STT for the entire speaking duration — prevents self-hearing.
-            // Barge-in is only possible via Orb tap (interruptSpeaking).
-            pauseSTT();
-            console.log("[TTS] Speaking started — STT paused, tap Orb to interrupt");
+            // Mute STT results (not the recognition engine!) to prevent self-hearing.
+            // Using muteMic instead of pauseRecognition because recognition.stop()
+            // kills the iOS audio session and breaks <audio>.play().
+            const client = clientRef.current;
+            if (client && "muteMic" in client) {
+                (client as { muteMic: () => void }).muteMic();
+            }
+            console.log("[TTS] Speaking started — mic muted, tap Orb to interrupt");
             let count = 0;
             for await (const job of queue) {
                 if (!isSpeakingRef.current) break;
@@ -211,7 +200,11 @@ export function useVoiceSession() {
             }
             console.log(`[TTS] Player done, played ${count} sentences`);
             isSpeakingRef.current = false;
-            resumeSTT(); // Resume STT only after ALL speaking is done
+            // Unmute STT after all speaking is done
+            const cli = clientRef.current;
+            if (cli && "unmuteMic" in cli) {
+                (cli as { unmuteMic: () => void }).unmuteMic();
+            }
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -523,10 +516,13 @@ export function useVoiceSession() {
             activeQueueRef.current.finish();
             activeQueueRef.current = null;
         }
-        // Resume STT so user can speak
-        resumeSTT();
+        // Unmute STT so user can speak
+        const cli = clientRef.current;
+        if (cli && "unmuteMic" in cli) {
+            (cli as { unmuteMic: () => void }).unmuteMic();
+        }
         setOrbState("listening");
-    }, [cleanupTTS, setOrbState, abortRef, resumeSTT]);
+    }, [cleanupTTS, setOrbState, abortRef]);
 
     return { isVoiceActive, startVoice, stopVoice, interruptSpeaking } as const;
 }
