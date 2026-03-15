@@ -271,7 +271,11 @@ export function useVoiceSession() {
             queue.finish();
             activeQueueRef.current = null;
             isProcessingRef.current = false;
-            // No unmuteMic — mic stays open for barge-in
+            // Always unmute mic after voice cycle ends (speaking or error)
+            const cli = clientRef.current;
+            if (cli && "unmuteMic" in cli) {
+                (cli as { unmuteMic: () => void }).unmuteMic();
+            }
             if (clientRef.current) setOrbState("listening");
         }
     }, [userId, addMessage, updateLastAssistantMessage, setOrbState, sendToChat, playBlob]);
@@ -360,21 +364,21 @@ export function useVoiceSession() {
         // ── iOS Audio Unlock ──
         // iOS requires <audio>.play() to be called during a user gesture
         // to "unlock" the audio element for future programmatic plays.
-        // Without this, playBlob() calls audioEl.play() outside gesture context
-        // and iOS silently blocks audio playback.
-        // Inline silent MP3: 0.1s of silence, ~200 bytes.
+        // IMPORTANT: Do NOT await — awaiting consumes the user gesture context,
+        // which prevents getUserMedia/recognition.start() from working.
         const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwMHAAAAAAD/+1DEAAAFAAn/AAAAIAAAP8AAAASRhGKYGBkYGBAADAxAwMDEDAgICAgICAgYGBgYGBgYGBv//8QAAAAAM";
         audioEl.src = SILENT_MP3;
         audioEl.volume = 0;
-        try {
-            await audioEl.play();
+        audioEl.play().then(() => {
             console.log("[TTS] iOS audio unlock: silent play succeeded");
-        } catch {
-            console.warn("[TTS] iOS audio unlock: silent play failed (user gesture may have expired)");
-        }
-        audioEl.pause();
-        audioEl.removeAttribute("src");
-        audioEl.volume = 1.0;
+            audioEl.pause();
+            audioEl.removeAttribute("src");
+            audioEl.volume = 1.0;
+        }).catch(() => {
+            console.warn("[TTS] iOS audio unlock: silent play failed");
+            audioEl.removeAttribute("src");
+            audioEl.volume = 1.0;
+        });
 
         let interimText = "";
 
