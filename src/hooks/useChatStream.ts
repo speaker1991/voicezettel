@@ -26,6 +26,7 @@ export function useChatStream() {
     const sendToChat = useCallback(async (
         userText: string,
         onSentence: (sentence: string) => void,
+        source: "voice" | "text" = "voice",
     ): Promise<string> => {
         const { aiProvider, systemPrompt } = useSettingsStore.getState();
         const allMessages = useChatStore.getState().messages;
@@ -44,7 +45,7 @@ export function useChatStream() {
                 provider: aiProvider,
                 systemPrompt,
                 userId,
-                source: "voice",
+                source,
             }),
             signal: abortRef.current.signal,
         });

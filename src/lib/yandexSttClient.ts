@@ -170,6 +170,11 @@ export class YandexSttClient {
         this._isMuted = false;
     }
 
+    /** Check if STT is currently muted */
+    get isMuted(): boolean {
+        return this._isMuted;
+    }
+
     /** Stop and clean up */
     stop(): void {
         this._isMuted = true;

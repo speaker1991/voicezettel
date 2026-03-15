@@ -159,6 +159,12 @@ export function useVoiceSession() {
 
         const runPlayer = async () => {
             setOrbState("speaking");
+            // Mute STT while assistant is speaking to prevent self-hearing
+            const client = clientRef.current;
+            if (client) {
+                client.muteMic();
+                console.log("[TTS] Muted STT to prevent self-hearing");
+            }
             let count = 0;
             for await (const job of queue) {
                 count++;
@@ -167,7 +173,6 @@ export function useVoiceSession() {
                 if (blob && blob.size > 0) {
                     await playBlob(blob);
                 } else if (job.text.length > 2 && "speechSynthesis" in window) {
-                    // Fallback: use browser native TTS if EdgeTTS returned nothing
                     console.warn(`[TTS] Sentence #${count} got null/empty blob — falling back to speechSynthesis`);
                     const { speakWithBrowserTTS } = await import("@/hooks/voiceHelpers");
                     await speakWithBrowserTTS(job.text);
@@ -176,6 +181,11 @@ export function useVoiceSession() {
                 }
             }
             console.log(`[TTS] Player done, played ${count} sentences`);
+            // Unmute STT after speaking is done
+            if (client && clientRef.current === client) {
+                client.unmuteMic();
+                console.log("[TTS] Unmuted STT — listening again");
+            }
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -331,6 +341,11 @@ export function useVoiceSession() {
 
         const callbacks: LocalVoiceCallbacks = {
             onTranscriptUser: (text: string, isFinal: boolean) => {
+                // Ignore transcripts while muted (assistant is speaking)
+                const client = clientRef.current;
+                if (client && client.isMuted) {
+                    return;
+                }
                 if (isFinal && text.trim().length > 0) {
                     setLiveTranscript("");
                     void processVoiceCycle(text.trim());
@@ -341,6 +356,11 @@ export function useVoiceSession() {
             },
             onUserSpeechStarted: () => {
                 interimText = "";
+                // Don't interrupt if STT is muted (assistant is speaking — prevent self-hearing)
+                const client = clientRef.current;
+                if (client && client.isMuted) {
+                    return;
+                }
                 if (isProcessingRef.current) {
                     abortRef.current?.abort();
                     cleanupTTS();

@@ -197,6 +197,11 @@ export class LocalVoiceClient {
         this.workletNode?.port.postMessage("start");
     }
 
+    /** Check if STT is currently muted */
+    get isMuted(): boolean {
+        return this._isMuted;
+    }
+
     /**
      * Stop everything and clean up.
      */

@@ -67,7 +67,7 @@ export async function classifyAndSave(
     // Prefer DeepSeek (works from Russia), fallback to OpenAI
     const apiKey = DEEPSEEK_API_KEY || OPENAI_API_KEY;
     const apiUrl = DEEPSEEK_API_KEY
-        ? "https://api.deepseek.com/v1/chat/completions"
+        ? "https://api.deepseek.com/chat/completions"
         : "https://api.openai.com/v1/chat/completions";
     const model = DEEPSEEK_API_KEY ? "deepseek-chat" : "gpt-4o-mini";
 
