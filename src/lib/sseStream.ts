@@ -36,7 +36,7 @@ export function appendCounterTags(
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
-    // ── VOICE MODE: zero-buffering passthrough ──
+    // ── VOICE MODE: low-latency passthrough + counter tags at end ──
     if (isVoice) {
         return new ReadableStream<Uint8Array>({
             async start(controller) {
@@ -59,6 +59,20 @@ export function appendCounterTags(
                         controller.enqueue(encoder.encode(buf));
                     }
                 } catch { /* stream interrupted */ }
+
+                // Append counter tags at the end (invisible to user —
+                // client-side detectCounterTypes strips them and triggers animation)
+                try {
+                    const result = await classifyPromise;
+                    if (result.counterTags.length > 0) {
+                        const tagStr = " " + result.counterTags.join(" ");
+                        const chunk = JSON.stringify({
+                            choices: [{ delta: { content: tagStr }, index: 0 }],
+                        });
+                        controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
+                    }
+                } catch { /* classifier failed — not critical */ }
+
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 controller.close();
             },

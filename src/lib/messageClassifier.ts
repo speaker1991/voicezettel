@@ -2,6 +2,7 @@ import { logger } from "@/lib/logger";
 import { writeNoteToVault } from "@/lib/vaultWriter";
 import { saveMemory } from "@/lib/memoryStore";
 
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 interface ClassifiedItem {
@@ -59,29 +60,38 @@ export async function classifyAndSave(
     userId: string,
     userMessage: string,
 ): Promise<ClassificationResult> {
-    if (!OPENAI_API_KEY || userMessage.trim().length < 15) {
+    if (userMessage.trim().length < 15) {
+        return { items: [], counterTags: [] };
+    }
+
+    // Prefer DeepSeek (works from Russia), fallback to OpenAI
+    const apiKey = DEEPSEEK_API_KEY || OPENAI_API_KEY;
+    const apiUrl = DEEPSEEK_API_KEY
+        ? "https://api.deepseek.com/v1/chat/completions"
+        : "https://api.openai.com/v1/chat/completions";
+    const model = DEEPSEEK_API_KEY ? "deepseek-chat" : "gpt-4o-mini";
+
+    if (!apiKey) {
         return { items: [], counterTags: [] };
     }
 
     try {
-        const response = await fetch(
-            "https://api.openai.com/v1/chat/completions",
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${OPENAI_API_KEY}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    model: "gpt-4o-mini",
-                    temperature: 0.1,
-                    messages: [
-                        { role: "system", content: CLASSIFICATION_PROMPT },
-                        { role: "user", content: userMessage },
-                    ],
-                }),
+        const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
             },
-        );
+            body: JSON.stringify({
+                model,
+                temperature: 0.1,
+                messages: [
+                    { role: "system", content: CLASSIFICATION_PROMPT },
+                    { role: "user", content: userMessage },
+                ],
+            }),
+            signal: AbortSignal.timeout(5000),
+        });
 
         if (!response.ok) {
             logger.error("Classifier API error:", response.status);
