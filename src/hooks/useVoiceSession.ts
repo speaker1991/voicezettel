@@ -50,7 +50,6 @@ export function useVoiceSession() {
     // Refs for audio
     const isProcessingRef = useRef(false);
     const isSpeakingRef = useRef(false);
-    const speakingStartedAtRef = useRef(0);
     const edgeTtsAudioElRef = useRef<HTMLAudioElement | null>(null);
     const micAudioCtxRef = useRef<AudioContext | null>(null);
     const audioLevelRafRef = useRef<number | null>(null);
@@ -77,6 +76,21 @@ export function useVoiceSession() {
         }
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
+        }
+    }, []);
+
+    // ── Pause/Resume STT during TTS playback ──
+    const pauseSTT = useCallback(() => {
+        const client = clientRef.current;
+        if (client && "pauseRecognition" in client) {
+            (client as { pauseRecognition: () => void }).pauseRecognition();
+        }
+    }, []);
+
+    const resumeSTT = useCallback(() => {
+        const client = clientRef.current;
+        if (client && "resumeRecognition" in client) {
+            (client as { resumeRecognition: () => void }).resumeRecognition();
         }
     }, []);
 
@@ -162,26 +176,37 @@ export function useVoiceSession() {
         const runPlayer = async () => {
             setOrbState("speaking");
             isSpeakingRef.current = true;
-            speakingStartedAtRef.current = Date.now();
-            // STT stays unmuted — barge-in is filtered by text length + debounce
-            console.log("[TTS] Speaking started — STT open, barge-in enabled");
+            console.log("[TTS] Speaking started");
             let count = 0;
             for await (const job of queue) {
+                if (!isSpeakingRef.current) break; // barge-in already happened
                 count++;
                 console.log(`[TTS] Playing sentence #${count}: "${job.text.slice(0, 40)}..."`);
                 const blob = await job.blobPromise;
+                if (!isSpeakingRef.current) break; // barge-in during fetch
                 if (blob && blob.size > 0) {
+                    pauseSTT(); // Stop STT before playing audio — prevents self-hearing
                     await playBlob(blob);
+                    if (isSpeakingRef.current) {
+                        resumeSTT(); // Resume STT between sentences — allows barge-in
+                        await new Promise(r => setTimeout(r, 250)); // let STT pick up user voice
+                    }
                 } else if (job.text.length > 2 && "speechSynthesis" in window) {
                     console.warn(`[TTS] Sentence #${count} got null/empty blob — falling back to speechSynthesis`);
+                    pauseSTT();
                     const { speakWithBrowserTTS } = await import("@/hooks/voiceHelpers");
                     await speakWithBrowserTTS(job.text);
+                    if (isSpeakingRef.current) {
+                        resumeSTT();
+                        await new Promise(r => setTimeout(r, 250));
+                    }
                 } else {
                     console.warn(`[TTS] Sentence #${count} got null/empty blob, no fallback available`);
                 }
             }
             console.log(`[TTS] Player done, played ${count} sentences`);
             isSpeakingRef.current = false;
+            resumeSTT(); // Make sure STT is running after speaking ends
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -338,19 +363,13 @@ export function useVoiceSession() {
         const callbacks: LocalVoiceCallbacks = {
             onTranscriptUser: (text: string, isFinal: boolean) => {
                 if (isSpeakingRef.current) {
-                    // During TTS playback, only allow barge-in with strict filters:
-                    // 1. Must be a final transcript (not interim)
-                    // 2. Text must be long enough (short fragments are usually echo)
-                    // 3. Must be at least 1.5s after speaking started (first second has strongest echo)
+                    // STT is paused during blob playback and only active in gaps.
+                    // Any final transcript during speaking = real barge-in
+                    // (not echo, because STT was stopped during audio).
                     if (!isFinal) return;
                     const trimmed = text.trim();
-                    const elapsed = Date.now() - speakingStartedAtRef.current;
-                    if (trimmed.length < 8 || elapsed < 1500) {
-                        console.log(`[Voice] Ignoring transcript during speaking (len=${trimmed.length}, elapsed=${elapsed}ms): "${trimmed.slice(0, 30)}"`);
-                        return;
-                    }
-                    // Real barge-in: user is speaking over the assistant
-                    console.log(`[Voice] Barge-in detected (len=${trimmed.length}, elapsed=${elapsed}ms): "${trimmed.slice(0, 40)}"`);
+                    if (trimmed.length < 2) return;
+                    console.log(`[Voice] Barge-in detected: "${trimmed.slice(0, 40)}"`);
                     abortRef.current?.abort();
                     cleanupTTS();
                     isSpeakingRef.current = false;

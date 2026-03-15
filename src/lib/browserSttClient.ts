@@ -17,6 +17,7 @@ export class BrowserSttClient {
     private callbacks: LocalVoiceCallbacks;
     private _isMuted = false;
     private _running = false;
+    private _paused = false;
 
     constructor(callbacks: LocalVoiceCallbacks) {
         this.callbacks = callbacks;
@@ -104,7 +105,8 @@ export class BrowserSttClient {
 
         recognition.onend = () => {
             // Auto-restart if session is still active (browser stops after ~60s silence)
-            if (this._running && !this._isMuted) {
+            // But NOT if intentionally paused for TTS playback
+            if (this._running && !this._isMuted && !this._paused) {
                 try {
                     recognition.start();
                 } catch {
@@ -140,6 +142,34 @@ export class BrowserSttClient {
     /** Check if STT is currently muted */
     get isMuted(): boolean {
         return this._isMuted;
+    }
+
+    /**
+     * Pause speech recognition engine.
+     * Used during TTS blob playback to prevent self-hearing.
+     * Unlike muteMic (which just ignores results), this actually
+     * stops the recognition so it doesn't pick up speaker audio.
+     */
+    pauseRecognition(): void {
+        if (this.recognition && this._running) {
+            this._paused = true;
+            try {
+                this.recognition.stop();
+            } catch { /* Already stopped */ }
+        }
+    }
+
+    /**
+     * Resume speech recognition engine.
+     * Called between TTS sentences to detect barge-in.
+     */
+    resumeRecognition(): void {
+        if (this.recognition && this._running && !this._isMuted) {
+            this._paused = false;
+            try {
+                this.recognition.start();
+            } catch { /* Already running */ }
+        }
     }
 
     /** Stop and clean up */

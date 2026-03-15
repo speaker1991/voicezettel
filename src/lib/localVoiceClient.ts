@@ -202,6 +202,12 @@ export class LocalVoiceClient {
         return this._isMuted;
     }
 
+    /** No-op — local STT server doesn't have self-hearing issues */
+    pauseRecognition(): void { /* no-op */ }
+
+    /** No-op — local STT server doesn't have self-hearing issues */
+    resumeRecognition(): void { /* no-op */ }
+
     /**
      * Stop everything and clean up.
      */

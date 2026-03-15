@@ -175,6 +175,12 @@ export class YandexSttClient {
         return this._isMuted;
     }
 
+    /** No-op — Yandex STT uses WebSocket, self-hearing handled differently */
+    pauseRecognition(): void { /* no-op */ }
+
+    /** No-op — Yandex STT uses WebSocket */
+    resumeRecognition(): void { /* no-op */ }
+
     /** Stop and clean up */
     stop(): void {
         this._isMuted = true;
