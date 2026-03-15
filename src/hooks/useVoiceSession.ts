@@ -49,6 +49,7 @@ export function useVoiceSession() {
 
     // Refs for audio
     const isProcessingRef = useRef(false);
+    const isSpeakingRef = useRef(false);
     const edgeTtsAudioElRef = useRef<HTMLAudioElement | null>(null);
     const micAudioCtxRef = useRef<AudioContext | null>(null);
     const audioLevelRafRef = useRef<number | null>(null);
@@ -159,12 +160,8 @@ export function useVoiceSession() {
 
         const runPlayer = async () => {
             setOrbState("speaking");
-            // Mute STT while assistant is speaking to prevent self-hearing
-            const client = clientRef.current;
-            if (client) {
-                client.muteMic();
-                console.log("[TTS] Muted STT to prevent self-hearing");
-            }
+            isSpeakingRef.current = true;
+            console.log("[TTS] Speaking started — STT results will be filtered");
             let count = 0;
             for await (const job of queue) {
                 count++;
@@ -181,11 +178,7 @@ export function useVoiceSession() {
                 }
             }
             console.log(`[TTS] Player done, played ${count} sentences`);
-            // Unmute STT after speaking is done
-            if (client && clientRef.current === client) {
-                client.unmuteMic();
-                console.log("[TTS] Unmuted STT — listening again");
-            }
+            isSpeakingRef.current = false;
         };
 
         const voice = useSettingsStore.getState().edgeTtsVoice;
@@ -341,24 +334,29 @@ export function useVoiceSession() {
 
         const callbacks: LocalVoiceCallbacks = {
             onTranscriptUser: (text: string, isFinal: boolean) => {
-                // Ignore transcripts while muted (assistant is speaking)
-                const client = clientRef.current;
-                if (client && client.isMuted) {
-                    return;
-                }
                 if (isFinal && text.trim().length > 0) {
+                    if (isSpeakingRef.current) {
+                        // Barge-in: user is speaking over the assistant
+                        console.log("[Voice] Barge-in detected:", text.slice(0, 30));
+                        abortRef.current?.abort();
+                        cleanupTTS();
+                        isSpeakingRef.current = false;
+                        isProcessingRef.current = false;
+                    }
                     setLiveTranscript("");
                     void processVoiceCycle(text.trim());
                 } else if (!isFinal) {
+                    // Show interim text even during speaking (shows barge-in attempt)
                     interimText = text;
                     setLiveTranscript(text);
                 }
             },
             onUserSpeechStarted: () => {
                 interimText = "";
-                // Don't interrupt if STT is muted (assistant is speaking — prevent self-hearing)
-                const client = clientRef.current;
-                if (client && client.isMuted) {
+                // During TTS playback, don't react to speech_started events —
+                // the microphone picks up the assistant's own voice from the speaker.
+                // Barge-in is handled in onTranscriptUser when isFinal=true.
+                if (isSpeakingRef.current) {
                     return;
                 }
                 if (isProcessingRef.current) {

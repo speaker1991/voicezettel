@@ -76,6 +76,7 @@ export async function classifyAndSave(
     }
 
     try {
+        logger.info(`[Classifier] Starting classification for: "${userMessage.slice(0, 50)}..." via ${model}`);
         const response = await fetch(apiUrl, {
             method: "POST",
             headers: {
@@ -90,11 +91,12 @@ export async function classifyAndSave(
                     { role: "user", content: userMessage },
                 ],
             }),
-            signal: AbortSignal.timeout(5000),
+            signal: AbortSignal.timeout(10000),
         });
 
         if (!response.ok) {
-            logger.error("Classifier API error:", response.status);
+            const errText = await response.text().catch(() => "");
+            logger.error(`[Classifier] API error: ${response.status} — ${errText.slice(0, 200)}`);
             return { items: [], counterTags: [] };
         }
 
@@ -105,6 +107,7 @@ export async function classifyAndSave(
 
         // Parse JSON — strip markdown fences if present
         const cleaned = raw.replace(/^```json?\s*/i, "").replace(/```\s*$/, "");
+        logger.info(`[Classifier] Raw response: ${cleaned.slice(0, 300)}`);
         const items = JSON.parse(cleaned) as ClassifiedItem[];
 
         if (!Array.isArray(items) || items.length === 0) {
@@ -161,15 +164,15 @@ ${item.essence}
             ).catch(() => { /* silent */ });
         }
 
-        logger.debug(
-            `Classified ${items.length} items: ${items.map((i) => i.type).join(", ")}`,
+        logger.info(
+            `[Classifier] Classified ${items.length} items: ${items.map((i) => i.type).join(", ")} → tags: ${counterTags.join(" ")}`,
         );
 
         return { items, counterTags };
     } catch (err) {
         logger.error(
-            "Classifier error:",
-            err instanceof Error ? err.message : err,
+            "[Classifier] Error:",
+            err instanceof Error ? `${err.message} (${err.name})` : err,
         );
         return { items: [], counterTags: [] };
     }
