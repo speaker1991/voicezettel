@@ -357,6 +357,25 @@ export function useVoiceSession() {
         // TTS visualization is handled via ontimeupdate in playBlob instead.
         console.log("[TTS] Audio element ready (direct playback, no AudioContext routing)");
 
+        // ── iOS Audio Unlock ──
+        // iOS requires <audio>.play() to be called during a user gesture
+        // to "unlock" the audio element for future programmatic plays.
+        // Without this, playBlob() calls audioEl.play() outside gesture context
+        // and iOS silently blocks audio playback.
+        // Inline silent MP3: 0.1s of silence, ~200 bytes.
+        const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwMHAAAAAAD/+1DEAAAFAAn/AAAAIAAAP8AAAASRhGKYGBkYGBAADAxAwMDEDAgICAgICAgYGBgYGBgYGBv//8QAAAAAM";
+        audioEl.src = SILENT_MP3;
+        audioEl.volume = 0;
+        try {
+            await audioEl.play();
+            console.log("[TTS] iOS audio unlock: silent play succeeded");
+        } catch {
+            console.warn("[TTS] iOS audio unlock: silent play failed (user gesture may have expired)");
+        }
+        audioEl.pause();
+        audioEl.removeAttribute("src");
+        audioEl.volume = 1.0;
+
         let interimText = "";
 
         const callbacks: LocalVoiceCallbacks = {

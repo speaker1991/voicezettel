@@ -5,8 +5,9 @@ const withPWA = withPWAInit({
     dest: "public",
     register: true,
     disable: process.env.NODE_ENV === "development",
-    cacheOnFrontEndNav: true,
-    aggressiveFrontEndNavCaching: true,
+    // REMOVED: cacheOnFrontEndNav and aggressiveFrontEndNavCaching
+    // These caused users to see stale JS after deployments.
+    // Next.js built-in caching with hashed filenames is sufficient.
     fallbacks: {
         document: "/offline",
     },
