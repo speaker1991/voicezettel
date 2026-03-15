@@ -30,7 +30,7 @@ export function OrbArea() {
     const audioLevel = useChatStore((s) => s.audioLevel);
     const setOrbMode = useChatStore((s) => s.setOrbMode);
     const orbParticles = useSettingsStore((s) => s.orbParticles);
-    const { isVoiceActive, startVoice, stopVoice } = useVoiceSession();
+    const { isVoiceActive, startVoice, stopVoice, interruptSpeaking } = useVoiceSession();
 
     const [mode, setMode] = useState<OrbMode>("voice");
     const [showSummary, setShowSummary] = useState(false);
@@ -46,12 +46,17 @@ export function OrbArea() {
     const handleOrbClick = useCallback(() => {
         warmUpAudio();
         setShowHint(false);
+        if (orbState === "speaking") {
+            // Tap-to-interrupt: stop TTS, switch to listening
+            interruptSpeaking();
+            return;
+        }
         if (isVoiceActive) {
             stopVoice();
         } else {
             startVoice();
         }
-    }, [isVoiceActive, startVoice, stopVoice]);
+    }, [isVoiceActive, startVoice, stopVoice, interruptSpeaking, orbState]);
 
     const modeIndex = MODES.indexOf(mode);
 

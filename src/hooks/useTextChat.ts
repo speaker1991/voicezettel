@@ -137,8 +137,8 @@ export function useTextChat() {
                                 parsed.choices?.[0]?.delta?.content;
                             if (content) {
                                 accumulated += content;
-                                // Strip DSML function call blocks in real-time
-                                const display = stripDSML(accumulated);
+                                // Strip DSML and counter tags in real-time
+                                const display = stripCounterTag(stripDSML(accumulated));
                                 updateLastAssistantMessage({
                                     content: display,
                                 });
