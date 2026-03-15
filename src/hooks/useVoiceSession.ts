@@ -306,6 +306,31 @@ export function useVoiceSession() {
     const startVoice = useCallback(async () => {
         if (clientRef.current) return;
 
+        // ── iOS Audio Unlock — MUST be FIRST, before any await ──
+        // iOS user gesture context expires after the first microtask boundary (await).
+        // We create the <audio> element and call play() synchronously here,
+        // while the gesture is still active. This "unlocks" the element
+        // for all future programmatic play() calls.
+        const audioEl = document.createElement("audio");
+        audioEl.setAttribute("playsinline", "true");
+        audioEl.style.display = "none";
+        document.body.appendChild(audioEl);
+        edgeTtsAudioElRef.current = audioEl;
+
+        const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwMHAAAAAAD/+1DEAAAFAAn/AAAAIAAAP8AAAASRhGKYGBkYGBAADAxAwMDEDAgICAgICAgYGBgYGBgYGBv//8QAAAAAM";
+        audioEl.src = SILENT_MP3;
+        audioEl.volume = 0;
+        audioEl.play().then(() => {
+            console.log("[TTS] iOS audio unlock: silent play succeeded");
+            audioEl.pause();
+            audioEl.removeAttribute("src");
+            audioEl.volume = 1.0;
+        }).catch(() => {
+            console.warn("[TTS] iOS audio unlock: silent play failed");
+            audioEl.removeAttribute("src");
+            audioEl.volume = 1.0;
+        });
+
         const voiceMode = useSettingsStore.getState().voiceMode;
 
         // Determine which STT client to use
@@ -349,36 +374,7 @@ export function useVoiceSession() {
             body: JSON.stringify({ text: " ", voice: warmupVoice }),
         }).catch(() => { /* warmup failed, not critical */ });
 
-        const audioEl = document.createElement("audio");
-        audioEl.setAttribute("playsinline", "true");
-        audioEl.style.display = "none";
-        document.body.appendChild(audioEl);
-        edgeTtsAudioElRef.current = audioEl;
-
-        // Audio plays directly via <audio> element — no AudioContext routing.
-        // createMediaElementSource was removed: it hijacks audio output through
-        // AudioContext which stays suspended on iOS, causing silent playback.
-        // TTS visualization is handled via ontimeupdate in playBlob instead.
-        console.log("[TTS] Audio element ready (direct playback, no AudioContext routing)");
-
-        // ── iOS Audio Unlock ──
-        // iOS requires <audio>.play() to be called during a user gesture
-        // to "unlock" the audio element for future programmatic plays.
-        // IMPORTANT: Do NOT await — awaiting consumes the user gesture context,
-        // which prevents getUserMedia/recognition.start() from working.
-        const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwMHAAAAAAD/+1DEAAAFAAn/AAAAIAAAP8AAAASRhGKYGBkYGBAADAxAwMDEDAgICAgICAgYGBgYGBgYGBv//8QAAAAAM";
-        audioEl.src = SILENT_MP3;
-        audioEl.volume = 0;
-        audioEl.play().then(() => {
-            console.log("[TTS] iOS audio unlock: silent play succeeded");
-            audioEl.pause();
-            audioEl.removeAttribute("src");
-            audioEl.volume = 1.0;
-        }).catch(() => {
-            console.warn("[TTS] iOS audio unlock: silent play failed");
-            audioEl.removeAttribute("src");
-            audioEl.volume = 1.0;
-        });
+        console.log("[TTS] Audio element ready (direct playback, iOS unlocked)");
 
         let interimText = "";
 
