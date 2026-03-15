@@ -57,6 +57,8 @@ export function useVoiceSession() {
     const micAnalyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
     const browserTtsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const playbackResolveRef = useRef<(() => void) | null>(null);
+    const activeQueueRef = useRef<AsyncQueue<SentenceJob> | null>(null);
 
     // ── Cleanup TTS ──
     const cleanupTTS = useCallback(() => {
@@ -76,6 +78,11 @@ export function useVoiceSession() {
         }
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
+        }
+        // Resolve any pending playBlob — unblocks runPlayer immediately on barge-in
+        if (playbackResolveRef.current) {
+            playbackResolveRef.current();
+            playbackResolveRef.current = null;
         }
     }, []);
 
@@ -104,6 +111,9 @@ export function useVoiceSession() {
                 return;
             }
 
+            // Store resolve so cleanupTTS can unblock us on barge-in
+            playbackResolveRef.current = resolve;
+
             const url = URL.createObjectURL(blob);
             audioEl.src = url;
             audioEl.volume = 1.0;
@@ -115,6 +125,7 @@ export function useVoiceSession() {
                 resolved = true;
                 audioEl.ontimeupdate = null;
                 URL.revokeObjectURL(url);
+                playbackResolveRef.current = null;
                 console.log("[TTS] Playback done");
                 resolve();
             };
@@ -172,6 +183,7 @@ export function useVoiceSession() {
         isProcessingRef.current = true;
 
         const queue = new AsyncQueue<SentenceJob>();
+        activeQueueRef.current = queue;
 
         const runPlayer = async () => {
             setOrbState("speaking");
@@ -271,6 +283,7 @@ export function useVoiceSession() {
             }
         } finally {
             queue.finish();
+            activeQueueRef.current = null;
             isProcessingRef.current = false;
             // No unmuteMic — mic stays open for barge-in
             if (clientRef.current) setOrbState("listening");
@@ -374,6 +387,11 @@ export function useVoiceSession() {
                     cleanupTTS();
                     isSpeakingRef.current = false;
                     isProcessingRef.current = false;
+                    // Finish the queue to unblock runPlayer's for-await loop
+                    if (activeQueueRef.current) {
+                        activeQueueRef.current.finish();
+                        activeQueueRef.current = null;
+                    }
                     setLiveTranscript("");
                     void processVoiceCycle(trimmed);
                     return;
@@ -525,6 +543,10 @@ export function useVoiceSession() {
         cleanupTTS();
         isSpeakingRef.current = false;
         isProcessingRef.current = false;
+        if (activeQueueRef.current) {
+            activeQueueRef.current.finish();
+            activeQueueRef.current = null;
+        }
         setOrbState("listening");
     }, [cleanupTTS, setOrbState, abortRef]);
 

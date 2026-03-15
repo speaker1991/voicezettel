@@ -7,6 +7,7 @@ import { useCountersStore } from "@/stores/countersStore";
 import { useUser } from "@/components/providers/UserProvider";
 import { stripDSML } from "@/lib/stripDSML";
 import { stripCounterTag } from "@/lib/detectCounterType";
+import { stripPrefTag } from "@/lib/detectPreference";
 
 /**
  * Sub-hook: streams a user message to /api/chat and calls onSentence
@@ -103,7 +104,7 @@ export function useChatStream() {
                     if (content) {
                         accumulated += content;
                         // Strip DSML and counter tags in real-time so chat bubble never shows them
-                        updateLastAssistantMessage({ content: stripCounterTag(stripDSML(accumulated)) });
+                        updateLastAssistantMessage({ content: stripPrefTag(stripCounterTag(stripDSML(accumulated))) });
 
                         // Check if we've entered a DSML block — stop feeding sentences to TTS
                         const dsmlStartPattern = /<\s*\|?\s*(?:DSML|function_calls?|antml|invoke)/i;

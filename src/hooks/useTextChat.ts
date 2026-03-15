@@ -11,6 +11,7 @@ import { sendToObsidian } from "@/lib/obsidianClient";
 import { useUser } from "@/components/providers/UserProvider";
 import { logger } from "@/lib/logger";
 import { stripDSML } from "@/lib/stripDSML";
+import { stripPrefTag } from "@/lib/detectPreference";
 
 export function useTextChat() {
     const addMessage = useChatStore((s) => s.addMessage);
@@ -138,7 +139,7 @@ export function useTextChat() {
                             if (content) {
                                 accumulated += content;
                                 // Strip DSML and counter tags in real-time
-                                const display = stripCounterTag(stripDSML(accumulated));
+                                const display = stripPrefTag(stripCounterTag(stripDSML(accumulated)));
                                 updateLastAssistantMessage({
                                     content: display,
                                 });
