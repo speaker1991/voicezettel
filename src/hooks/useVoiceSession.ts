@@ -164,7 +164,19 @@ export function useVoiceSession() {
 
     // ── Process one voice cycle ──
     const processVoiceCycle = useCallback(async (userText: string) => {
-        if (isProcessingRef.current) return;
+        // If already processing — abort the previous cycle and start a new one
+        if (isProcessingRef.current) {
+            console.log("[Voice] processVoiceCycle: aborting previous cycle for new query");
+            abortRef.current?.abort();
+            cleanupTTS();
+            isSpeakingRef.current = false;
+            if (activeQueueRef.current) {
+                activeQueueRef.current.finish();
+                activeQueueRef.current = null;
+            }
+            // Let event loop process abort before new start
+            await new Promise((r) => setTimeout(r, 50));
+        }
         isProcessingRef.current = true;
 
         const queue = new AsyncQueue<SentenceJob>();
@@ -380,11 +392,11 @@ export function useVoiceSession() {
 
         const callbacks: LocalVoiceCallbacks = {
             onTranscriptUser: (text: string, isFinal: boolean) => {
-                // Completely ignore ALL transcripts while assistant is speaking.
-                // STT is paused, but WebKit may still deliver buffered results.
-                // Barge-in is via Orb tap only (interruptSpeaking).
-                if (isSpeakingRef.current) return;
-
+                // If still speaking (barge-in in progress) — show transcript but don't start cycle
+                if (isSpeakingRef.current) {
+                    if (!isFinal) setLiveTranscript(text);
+                    return;
+                }
                 if (isFinal && text.trim().length > 0) {
                     setLiveTranscript("");
                     void processVoiceCycle(text.trim());
@@ -395,10 +407,23 @@ export function useVoiceSession() {
             },
             onUserSpeechStarted: () => {
                 interimText = "";
-                // During TTS playback, don't react to speech_started events —
-                // the microphone picks up the assistant's own voice from the speaker.
-                // Barge-in is handled in onTranscriptUser when isFinal=true.
+                // If assistant is speaking — barge-in: stop TTS immediately
                 if (isSpeakingRef.current) {
+                    console.log("[Voice] Barge-in: user started speaking, interrupting TTS");
+                    abortRef.current?.abort();
+                    cleanupTTS();
+                    isSpeakingRef.current = false;
+                    isProcessingRef.current = false;
+                    if (activeQueueRef.current) {
+                        activeQueueRef.current.finish();
+                        activeQueueRef.current = null;
+                    }
+                    // Unmute STT so user's speech gets through
+                    const cli = clientRef.current;
+                    if (cli && "unmuteMic" in cli) {
+                        (cli as { unmuteMic: () => void }).unmuteMic();
+                    }
+                    setOrbState("listening");
                     return;
                 }
                 if (isProcessingRef.current) {
