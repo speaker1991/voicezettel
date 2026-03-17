@@ -38,5 +38,9 @@ export function stripDSML(text: string): string {
         return text.slice(0, trailingAngle).trim();
     }
 
-    return text;
+    // Phase 4: Strip [COUNTER:*] and [SAVE_PREF:*] tags — they are for counter/pref logic, not display/TTS
+    text = text.replace(/\[COUNTER:[a-z]+\]/gi, "");
+    text = text.replace(/\[SAVE_PREF:[^\]]*\]/gi, "");
+
+    return text.trim() || text;
 }
