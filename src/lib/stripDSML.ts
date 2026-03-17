@@ -9,8 +9,19 @@
  * - <parameter name="...">  /  </parameter>
  */
 export function stripDSML(text: string): string {
+    // Phase 0: Remove COMPLETE closed DSML blocks (opening + closing tag pairs)
+    // This handles cases where the DSML block starts at the very beginning of the response.
+    text = text.replace(
+        /<\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[^>]*>[\s\S]*?<\/\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[^>]*>/gi,
+        "",
+    );
+    // Phase 0b: Remove unclosed DSML blocks from first opening tag to end of string
+    text = text.replace(
+        /<\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[\s\S]*/gi,
+        "",
+    );
+
     // Phase 1: Complete DSML-like blocks — remove from first tag (opening or closing) to end.
-    // IMPORTANT: "parameter" is included — DeepSeek outputs </parameter> tags.
     const fullIdx = text.search(
         /<\s*\/?\s*\|?\s*(?:DSML|function_calls?|antml|invoke|parameter)[^]*$/i,
     );
@@ -26,7 +37,6 @@ export function stripDSML(text: string): string {
 
     // Phase 2: Partial tag building up at end of string (during streaming).
     // Catches: "</", "</ ", "</ |", "< |", "< | D", "</inv", etc.
-    // Unified: "<" followed by "/" or "|" and anything without ">" until end.
     const partialIdx = text.search(/<\s*[\/|][^>]*$/);
     if (partialIdx !== -1) {
         return text.slice(0, partialIdx).trim();
@@ -38,7 +48,7 @@ export function stripDSML(text: string): string {
         return text.slice(0, trailingAngle).trim();
     }
 
-    // Phase 4: Strip [COUNTER:*] and [SAVE_PREF:*] tags — they are for counter/pref logic, not display/TTS
+    // Phase 4: Strip [COUNTER:*] and [SAVE_PREF:*] tags — for counter/pref logic, not display/TTS
     text = text.replace(/\[COUNTER:[a-z]+\]/gi, "");
     text = text.replace(/\[SAVE_PREF:[^\]]*\]/gi, "");
 
