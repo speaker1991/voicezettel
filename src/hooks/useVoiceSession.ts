@@ -59,9 +59,15 @@ export function useVoiceSession() {
     const browserTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const playbackResolveRef = useRef<(() => void) | null>(null);
     const activeQueueRef = useRef<AsyncQueue<SentenceJob> | null>(null);
+    const bargeInRafRef = useRef<number | null>(null);
 
     // ── Cleanup TTS ──
     const cleanupTTS = useCallback(() => {
+        // Stop barge-in detector
+        if (bargeInRafRef.current) {
+            cancelAnimationFrame(bargeInRafRef.current);
+            bargeInRafRef.current = null;
+        }
         const audioEl = edgeTtsAudioElRef.current;
         if (audioEl) {
             audioEl.pause();
@@ -85,6 +91,55 @@ export function useVoiceSession() {
             playbackResolveRef.current = null;
         }
     }, []);
+
+    // ── Mic-level barge-in detector ──
+    // Runs via rAF while TTS is playing. Uses AnalyserNode (independent of
+    // Whisper/STT) to detect user speaking at >THRESHOLD for HOLD_MS.
+    const startBargeInDetector = useCallback(() => {
+        const THRESHOLD = 0.18;
+        const HOLD_MS = 300;
+        let holdStart: number | null = null;
+
+        const check = () => {
+            if (!isSpeakingRef.current) {
+                bargeInRafRef.current = null;
+                return;
+            }
+
+            const level = getAudioLevel(
+                micAnalyserRef.current,
+                micAnalyserDataRef.current,
+            );
+
+            if (level > THRESHOLD) {
+                if (holdStart === null) holdStart = Date.now();
+                if (Date.now() - holdStart >= HOLD_MS) {
+                    console.log("[Voice] Barge-in: mic level", level.toFixed(2), "held", HOLD_MS, "ms");
+                    abortRef.current?.abort();
+                    cleanupTTS();
+                    isSpeakingRef.current = false;
+                    isProcessingRef.current = false;
+                    if (activeQueueRef.current) {
+                        activeQueueRef.current.finish();
+                        activeQueueRef.current = null;
+                    }
+                    const cli = clientRef.current;
+                    if (cli && "unmuteMic" in cli) {
+                        (cli as { unmuteMic: () => void }).unmuteMic();
+                    }
+                    setOrbState("listening");
+                    bargeInRafRef.current = null;
+                    return;
+                }
+            } else {
+                holdStart = null;
+            }
+
+            bargeInRafRef.current = requestAnimationFrame(check);
+        };
+
+        bargeInRafRef.current = requestAnimationFrame(check);
+    }, [cleanupTTS, setOrbState, abortRef]);
 
     // ── Play a single audio blob ──
     const playBlob = useCallback((blob: Blob): Promise<void> => {
@@ -192,7 +247,8 @@ export function useVoiceSession() {
             if (client && "muteMic" in client) {
                 (client as { muteMic: () => void }).muteMic();
             }
-            console.log("[TTS] Speaking started — mic muted, tap Orb to interrupt");
+            startBargeInDetector();
+            console.log("[TTS] Speaking started — mic muted, barge-in detector active");
             let count = 0;
             for await (const job of queue) {
                 if (!isSpeakingRef.current) break;
@@ -245,7 +301,8 @@ export function useVoiceSession() {
             console.log("[TTS] Stream finished, raw response length:", rawResponse.length);
 
             queue.finish();
-            await playerPromise;
+            isProcessingRef.current = false; // allow new queries immediately
+            await playerPromise; // TTS finishes playing in background
 
             const cleanText = cleanResponseText(rawResponse);
             updateLastAssistantMessage({ content: cleanText });
@@ -290,7 +347,7 @@ export function useVoiceSession() {
             }
             if (clientRef.current) setOrbState("listening");
         }
-    }, [userId, addMessage, updateLastAssistantMessage, setOrbState, sendToChat, playBlob]);
+    }, [userId, addMessage, updateLastAssistantMessage, setOrbState, sendToChat, playBlob, startBargeInDetector]);
 
     // ── Hot-swap TTS provider or voice ──
     useEffect(() => {
@@ -523,6 +580,10 @@ export function useVoiceSession() {
         }
         abortChat();
         cleanupTTS();
+        if (bargeInRafRef.current) {
+            cancelAnimationFrame(bargeInRafRef.current);
+            bargeInRafRef.current = null;
+        }
         stopRecognition();
         setLiveTranscript("");
 
