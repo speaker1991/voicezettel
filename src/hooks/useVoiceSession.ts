@@ -399,19 +399,33 @@ export function useVoiceSession() {
         document.body.appendChild(audioEl);
         edgeTtsAudioElRef.current = audioEl;
 
-        const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwMHAAAAAAD/+1DEAAAFAAn/AAAAIAAAP8AAAASRhGKYGBkYGBAADAxAwMDEDAgICAgICAgYGBgYGBgYGBv//8QAAAAAM";
-        audioEl.src = SILENT_MP3;
-        audioEl.volume = 0;
-        audioEl.play().then(() => {
-            console.log("[TTS] iOS audio unlock: silent play succeeded");
-            audioEl.pause();
-            audioEl.removeAttribute("src");
+        // Unlock audio session on mobile (iOS Safari / Android Chrome).
+        // Must run synchronously inside the user gesture (tap) to allow
+        // future async play() calls to work without restriction.
+        try {
+            audioEl.src =
+                "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAgD4AAAB+" +
+                "AAACABAAZGFOYQoAAAAA";
+            audioEl.volume = 0;
+            const unlockPromise = audioEl.play();
+            if (unlockPromise !== undefined) {
+                unlockPromise
+                    .then(() => {
+                        audioEl.pause();
+                        audioEl.removeAttribute("src");
+                        audioEl.load();
+                        audioEl.volume = 1.0;
+                        console.log("[TTS] Audio session unlocked (mobile)");
+                    })
+                    .catch(() => {
+                        audioEl.removeAttribute("src");
+                        audioEl.load();
+                        audioEl.volume = 1.0;
+                    });
+            }
+        } catch {
             audioEl.volume = 1.0;
-        }).catch(() => {
-            console.warn("[TTS] iOS audio unlock: silent play failed");
-            audioEl.removeAttribute("src");
-            audioEl.volume = 1.0;
-        });
+        }
 
         const voiceMode = useSettingsStore.getState().voiceMode;
 
