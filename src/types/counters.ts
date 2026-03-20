@@ -26,7 +26,7 @@ export interface CountersActions {
 
 // ── Settings store types ────────────────────────────────────
 export type AiProvider = "openai" | "google" | "deepseek";
-export type TtsProvider = "browser" | "edge" | "yandex" | "openai";
+export type TtsProvider = "browser" | "edge" | "yandex" | "openai" | "local";
 export type VoiceMode = "cloud" | "local" | "browser" | "yandex";
 
 export interface SettingsState {
@@ -44,6 +44,7 @@ export interface SettingsState {
     aiVoiceEnabled: boolean;
     ttsProvider: TtsProvider;
     edgeTtsVoice: string;
+    localTtsVoice: string;
     obsidianApiKey: string;
     obsidianApiUrl: string;
     voiceMode: VoiceMode;
@@ -65,6 +66,7 @@ export interface SettingsActions {
     toggleAiVoiceEnabled: () => void;
     setTtsProvider: (provider: TtsProvider) => void;
     setEdgeTtsVoice: (voice: string) => void;
+    setLocalTtsVoice: (voice: string) => void;
     setObsidianApiKey: (key: string) => void;
     setObsidianApiUrl: (url: string) => void;
     setVoiceMode: (mode: VoiceMode) => void;

@@ -22,6 +22,7 @@ import {
     type SentenceJob,
     AsyncQueue,
     prefetchEdgeTTS,
+    prefetchLocalTTS,
     cleanResponseText,
     getAudioLevel,
 } from "@/hooks/voiceHelpers";
@@ -275,7 +276,7 @@ export function useVoiceSession() {
             }
         };
 
-        const voice = useSettingsStore.getState().edgeTtsVoice;
+        const { ttsProvider, edgeTtsVoice, localTtsVoice } = useSettingsStore.getState();
 
         try {
             addMessage({ id: crypto.randomUUID(), role: "user", content: userText, timestamp: new Date().toISOString(), source: "voice" });
@@ -296,7 +297,10 @@ export function useVoiceSession() {
                 clean = clean.trim();
                 console.log("[TTS] Sentence detected:", clean.slice(0, 50), "length:", clean.length);
                 if (clean.length < 2) return;
-                queue.push({ text: clean, blobPromise: prefetchEdgeTTS(clean, voice) });
+                const blobPromise = ttsProvider === "local"
+                    ? prefetchLocalTTS(clean, localTtsVoice)
+                    : prefetchEdgeTTS(clean, edgeTtsVoice);
+                queue.push({ text: clean, blobPromise });
             });
             console.log("[TTS] Stream finished, raw response length:", rawResponse.length);
 

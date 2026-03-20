@@ -97,6 +97,42 @@ export async function prefetchEdgeTTS(text: string, voice: string): Promise<Blob
 }
 
 /**
+ * Pre-fetch Local Silero TTS audio for a sentence.
+ * Returns a Blob (audio/wav) or null on failure. Does NOT play anything.
+ */
+export async function prefetchLocalTTS(
+    text: string,
+    speaker: string = "xenia",
+): Promise<Blob | null> {
+    try {
+        const clean = text
+            .replace(/\[COUNTER:\w+\]/gi, "")
+            .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F000}-\u{1FFFF}]/gu, "")
+            .replace(/[*_#>`~]/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+        if (!clean || clean.length < 2) return null;
+
+        console.log("[TTS-Local] Fetching audio for:", clean.slice(0, 50), "speaker:", speaker);
+        const res = await fetch("/api/tts-local", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: clean, voice: speaker }),
+        });
+        if (!res.ok) {
+            console.error("[TTS-Local] /api/tts-local returned error:", res.status);
+            return null;
+        }
+        const blob = await res.blob();
+        console.log("[TTS-Local] Got audio blob:", blob.size, "bytes, type:", blob.type);
+        return blob;
+    } catch (err) {
+        console.error("[TTS-Local] prefetchLocalTTS error:", err);
+        return null;
+    }
+}
+
+/**
  * Clean assistant response text: strip DSML, counter tags, preferences, JSON artifacts.
  */
 export function cleanResponseText(raw: string): string {

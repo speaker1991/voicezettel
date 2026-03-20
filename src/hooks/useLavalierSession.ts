@@ -14,6 +14,7 @@ import { logger } from "@/lib/logger";
 import { useChatStream } from "@/hooks/useChatStream";
 import {
     prefetchEdgeTTS,
+    prefetchLocalTTS,
     cleanResponseText,
     AsyncQueue,
     type SentenceJob,
@@ -86,7 +87,7 @@ export function useLavalierSession() {
                 edgeTtsAudioElRef.current = audioEl;
             }
 
-            const voice = useSettingsStore.getState().edgeTtsVoice;
+            const { ttsProvider, edgeTtsVoice, localTtsVoice } = useSettingsStore.getState();
             const queue = new AsyncQueue<SentenceJob>();
 
             addMessage({
@@ -115,10 +116,10 @@ export function useLavalierSession() {
                             .replace(/[*_#>`~]/g, "")
                             .trim();
                         if (clean.length > 2) {
-                            queue.push({
-                                text: clean,
-                                blobPromise: prefetchEdgeTTS(clean, voice),
-                            });
+                            const blobPromise = ttsProvider === "local"
+                                ? prefetchLocalTTS(clean, localTtsVoice)
+                                : prefetchEdgeTTS(clean, edgeTtsVoice);
+                            queue.push({ text: clean, blobPromise });
                         }
                     },
                     "voice",
