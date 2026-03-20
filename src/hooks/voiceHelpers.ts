@@ -7,6 +7,64 @@ import { stripDSML } from "@/lib/stripDSML";
 import { detectCounterTypes, stripCounterTag } from "@/lib/detectCounterType";
 import { stripPrefTag } from "@/lib/detectPreference";
 
+// --- Number-to-words for Russian TTS ---
+
+const RU_ONES = ['','один','два','три','четыре','пять','шесть','семь','восемь','девять'];
+const RU_TEENS = ['десять','одиннадцать','двенадцать','тринадцать','четырнадцать','пятнадцать','шестнадцать','семнадцать','восемнадцать','девятнадцать'];
+const RU_TENS = ['','','двадцать','тридцать','сорок','пятьдесят','шестьдесят','семьдесят','восемьдесят','девяносто'];
+const RU_HUNDREDS = ['','сто','двести','триста','четыреста','пятьсот','шестьсот','семьсот','восемьсот','девятьсот'];
+
+function numberToRussian(n: number): string {
+    if (n === 0) return 'ноль';
+    if (n < 0) return 'минус ' + numberToRussian(-n);
+    let result = '';
+    const h = Math.floor(n / 100);
+    const rest = n % 100;
+    const t = Math.floor(rest / 10);
+    const o = rest % 10;
+    if (h > 0) result += RU_HUNDREDS[h] + ' ';
+    if (t === 1) {
+        result += RU_TEENS[o] + ' ';
+    } else {
+        if (t > 1) result += RU_TENS[t] + ' ';
+        if (o > 0) result += RU_ONES[o] + ' ';
+    }
+    return result.trim();
+}
+
+const EN_WORD_MAP: Record<string, string> = {
+    'tesla': 'тесла', 'apple': 'эппл', 'google': 'гугл', 'youtube': 'ютуб',
+    'api': 'эй-пи-ай', 'tts': 'тэ-тэ-эс', 'gpt': 'джи-пи-ти', 'ai': 'эй-ай',
+    'cpu': 'цэ-пэ-у', 'gpu': 'джи-пи-ю', 'ok': 'окей', 'yes': 'йес',
+    'no': 'ноу', 'chat': 'чат', 'bot': 'бот', 'open': 'опен',
+    'openai': 'опен-эй-ай', 'microsoft': 'майкрософт', 'windows': 'виндовс',
+    'android': 'андроид', 'iphone': 'айфон', 'mac': 'мак', 'linux': 'линукс',
+};
+
+function transliterateEn(word: string): string {
+    const lower = word.toLowerCase();
+    if (EN_WORD_MAP[lower]) return EN_WORD_MAP[lower];
+    if (/^[A-Z]{2,6}$/.test(word)) {
+        const letterMap: Record<string, string> = {
+            'A':'эй','B':'би','C':'си','D':'ди','E':'и','F':'эф','G':'джи',
+            'H':'эйч','I':'ай','J':'джей','K':'кей','L':'эл','M':'эм',
+            'N':'эн','O':'оу','P':'пи','Q':'кью','R':'ар','S':'эс',
+            'T':'ти','U':'ю','V':'ви','W':'дабл-ю','X':'экс','Y':'вай','Z':'зет',
+        };
+        return word.split('').map(c => letterMap[c] || c).join('-');
+    }
+    return word;
+}
+
+export function normalizeTextForTTS(text: string): string {
+    let t = text.replace(/\[COUNTER:[^\]]*\]/g, '');
+    t = t.replace(/[\u{1F300}-\u{1FFFF}]/gu, '');
+    t = t.replace(/\b(\d{1,6})\b/g, (_, num) => numberToRussian(parseInt(num, 10)));
+    t = t.replace(/\b([A-Za-z]{2,})\b/g, (_, word) => transliterateEn(word));
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+}
+
 /* ─── Types ─── */
 export interface SentenceJob {
     text: string;
@@ -98,20 +156,15 @@ export async function prefetchEdgeTTS(text: string, voice: string): Promise<Blob
 
 /**
  * Pre-fetch Local Silero TTS audio for a sentence.
- * Returns a Blob (audio/wav) or null on failure. Does NOT play anything.
+ * Uses normalizeTextForTTS for number/English word handling.
  */
 export async function prefetchLocalTTS(
     text: string,
-    speaker: string = "xenia",
+    speaker: string = "kseniya",
 ): Promise<Blob | null> {
     try {
-        const clean = text
-            .replace(/\[COUNTER:\w+\]/gi, "")
-            .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F000}-\u{1FFFF}]/gu, "")
-            .replace(/[*_#>`~]/g, "")
-            .replace(/\s{2,}/g, " ")
-            .trim();
-        if (!clean || clean.length < 2) return null;
+        const clean = normalizeTextForTTS(text);
+        if (!clean || clean.length < 1) return null;
 
         console.log("[TTS-Local] Fetching audio for:", clean.slice(0, 50), "speaker:", speaker);
         const res = await fetch("/api/tts-local", {
@@ -128,6 +181,33 @@ export async function prefetchLocalTTS(
         return blob;
     } catch (err) {
         console.error("[TTS-Local] prefetchLocalTTS error:", err);
+        return null;
+    }
+}
+
+/**
+ * Pre-fetch Piper TTS audio for a sentence.
+ * Uses normalizeTextForTTS for number/English word handling.
+ */
+export async function prefetchPiperTTS(text: string): Promise<Blob | null> {
+    const clean = normalizeTextForTTS(text);
+    if (!clean || clean.length < 1) return null;
+    try {
+        console.log("[TTS-Piper] Fetching audio for:", clean.slice(0, 50));
+        const res = await fetch("/api/tts-piper", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: clean }),
+        });
+        if (!res.ok) {
+            console.error("[TTS-Piper] /api/tts-piper returned error:", res.status);
+            return null;
+        }
+        const blob = await res.blob();
+        console.log("[TTS-Piper] Got audio blob:", blob.size, "bytes, type:", blob.type);
+        return blob;
+    } catch (err) {
+        console.error("[TTS-Piper] prefetchPiperTTS error:", err);
         return null;
     }
 }

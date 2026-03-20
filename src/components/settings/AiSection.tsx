@@ -15,7 +15,8 @@ const TTS_PROVIDERS = [
     { key: "browser" as const, label: "Браузер", notif: "Озвучка: Браузер — применится к следующему ответу" },
     { key: "edge" as const, label: "Edge TTS", notif: "TTS: Edge TTS — применится к следующему ответу" },
     { key: "yandex" as const, label: "Yandex", notif: "TTS: Yandex SpeechKit — применится к следующему ответу" },
-    { key: "local" as const, label: "Local", notif: "TTS: Silero Local — применится к следующему ответу" },
+    { key: "local" as const, label: "Silero (kseniya)", notif: "TTS: Silero Local — применится к следующему ответу" },
+    { key: "piper" as const, label: "Piper (ruslan)", notif: "TTS: Piper Local — применится к следующему ответу" },
 ];
 
 function ProviderButton({

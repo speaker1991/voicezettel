@@ -66,7 +66,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 aiVoiceEnabled: true,
                 ttsProvider: "edge",
                 edgeTtsVoice: "ru-RU-SvetlanaNeural",
-                localTtsVoice: "xenia",
+                localTtsVoice: "kseniya",
+                piperTtsVoice: "ruslan",
                 obsidianApiKey: "",
                 obsidianApiUrl: "http://127.0.0.1:27123",
                 voiceMode: "cloud",
@@ -95,6 +96,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 setTtsProvider: (provider) => set({ ttsProvider: provider }),
                 setEdgeTtsVoice: (voice) => set({ edgeTtsVoice: voice }),
                 setLocalTtsVoice: (voice) => set({ localTtsVoice: voice }),
+                setPiperTtsVoice: (voice) => set({ piperTtsVoice: voice }),
                 setObsidianApiKey: (key) => set({ obsidianApiKey: key }),
                 setObsidianApiUrl: (url) => set({ obsidianApiUrl: url }),
                 setVoiceMode: (mode) => set({ voiceMode: mode }),
@@ -119,12 +121,13 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                     ttsProvider: state.ttsProvider,
                     edgeTtsVoice: state.edgeTtsVoice,
                     localTtsVoice: state.localTtsVoice,
+                    piperTtsVoice: state.piperTtsVoice,
                     obsidianApiKey: state.obsidianApiKey,
                     obsidianApiUrl: state.obsidianApiUrl,
                     voiceMode: state.voiceMode,
                     lavMode: state.lavMode,
                 }),
-                version: 11,
+                version: 12,
                 migrate: (persisted, version) => {
                     const state = persisted as Record<string, unknown>;
                     if (version < 2) {
@@ -161,7 +164,13 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                         delete state.systemPrompt;
                     }
                     if (version < 11) {
-                        state.localTtsVoice = "xenia";
+                        state.localTtsVoice = "kseniya";
+                    }
+                    if (version < 12) {
+                        state.piperTtsVoice = "ruslan";
+                        if (state.localTtsVoice === "xenia") {
+                            state.localTtsVoice = "kseniya";
+                        }
                     }
                     return state;
                 },

@@ -23,6 +23,7 @@ import {
     AsyncQueue,
     prefetchEdgeTTS,
     prefetchLocalTTS,
+    prefetchPiperTTS,
     cleanResponseText,
     getAudioLevel,
 } from "@/hooks/voiceHelpers";
@@ -299,7 +300,9 @@ export function useVoiceSession() {
                 if (clean.length < 2) return;
                 const blobPromise = ttsProvider === "local"
                     ? prefetchLocalTTS(clean, localTtsVoice)
-                    : prefetchEdgeTTS(clean, edgeTtsVoice);
+                    : ttsProvider === "piper"
+                        ? prefetchPiperTTS(clean)
+                        : prefetchEdgeTTS(clean, edgeTtsVoice);
                 queue.push({ text: clean, blobPromise });
             });
             console.log("[TTS] Stream finished, raw response length:", rawResponse.length);

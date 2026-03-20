@@ -15,6 +15,7 @@ import { useChatStream } from "@/hooks/useChatStream";
 import {
     prefetchEdgeTTS,
     prefetchLocalTTS,
+    prefetchPiperTTS,
     cleanResponseText,
     AsyncQueue,
     type SentenceJob,
@@ -118,7 +119,9 @@ export function useLavalierSession() {
                         if (clean.length > 2) {
                             const blobPromise = ttsProvider === "local"
                                 ? prefetchLocalTTS(clean, localTtsVoice)
-                                : prefetchEdgeTTS(clean, edgeTtsVoice);
+                                : ttsProvider === "piper"
+                                    ? prefetchPiperTTS(clean)
+                                    : prefetchEdgeTTS(clean, edgeTtsVoice);
                             queue.push({ text: clean, blobPromise });
                         }
                     },
