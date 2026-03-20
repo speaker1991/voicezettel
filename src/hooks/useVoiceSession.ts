@@ -94,6 +94,28 @@ export function useVoiceSession() {
         }
     }, []);
 
+    // ── Warmup local TTS servers on mount ──
+    useEffect(() => {
+        // Прогреть ОБА локальных TTS сервера при загрузке страницы,
+        // независимо от текущего выбранного провайдера.
+        // Это гарантирует что модели загружены в память ДО первого голосового запроса.
+        const { localTtsVoice } = useSettingsStore.getState();
+
+        // Прогрев Silero
+        fetch("/api/tts-local", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "прогрев", voice: localTtsVoice ?? "kseniya" }),
+        }).catch(() => {});
+
+        // Прогрев Piper
+        fetch("/api/tts-piper", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "прогрев" }),
+        }).catch(() => {});
+    }, []);
+
     // ── Mic-level barge-in detector ──
     // Runs via rAF while TTS is playing. Uses AnalyserNode (independent of
     // Whisper/STT) to detect user speaking at >THRESHOLD for HOLD_MS.
