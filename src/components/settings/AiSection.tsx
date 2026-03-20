@@ -78,19 +78,23 @@ export function AiSection() {
                 {settings.aiVoiceEnabled && (
                     <div className="flex items-center justify-between py-2">
                         <span className="text-sm text-zinc-300">Озвучка</span>
-                        <div className="flex items-center gap-2">
+                        <select
+                            className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 outline-none ring-1 ring-white/10 focus:ring-violet-500 transition-colors"
+                            value={settings.ttsProvider}
+                            onChange={(e) => {
+                                const p = TTS_PROVIDERS.find((t) => t.key === e.target.value);
+                                if (p) {
+                                    settings.setTtsProvider(p.key);
+                                    addNotification(p.notif, "info");
+                                }
+                            }}
+                        >
                             {TTS_PROVIDERS.map((p) => (
-                                <ProviderButton
-                                    key={p.key}
-                                    active={settings.ttsProvider === p.key}
-                                    label={p.label}
-                                    onClick={() => {
-                                        settings.setTtsProvider(p.key);
-                                        addNotification(p.notif, "info");
-                                    }}
-                                />
+                                <option key={p.key} value={p.key}>
+                                    {p.label}
+                                </option>
                             ))}
-                        </div>
+                        </select>
                     </div>
                 )}
             </div>
