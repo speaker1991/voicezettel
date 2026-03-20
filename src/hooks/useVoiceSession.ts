@@ -447,14 +447,29 @@ export function useVoiceSession() {
         setModality("voice");
         setOrbState("listening");
 
-        // Warmup TTS connection — first request creates WebSocket to Microsoft servers (~200-400ms)
-        // Do this in background so it's ready when first sentence arrives
-        const warmupVoice = useSettingsStore.getState().edgeTtsVoice;
-        fetch("/api/tts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: " ", voice: warmupVoice }),
-        }).catch(() => { /* warmup failed, not critical */ });
+        // Warmup TTS — прогреть нужный провайдер в зависимости от настроек
+        const { ttsProvider, edgeTtsVoice, localTtsVoice } =
+            useSettingsStore.getState();
+
+        if (ttsProvider === "local") {
+            fetch("/api/tts-local", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "прогрев", voice: localTtsVoice ?? "kseniya" }),
+            }).catch(() => {});
+        } else if (ttsProvider === "piper") {
+            fetch("/api/tts-piper", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "прогрев" }),
+            }).catch(() => {});
+        } else {
+            fetch("/api/tts", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: " ", voice: edgeTtsVoice }),
+            }).catch(() => {});
+        }
 
         console.log("[TTS] Audio element ready (direct playback, iOS unlocked)");
 
