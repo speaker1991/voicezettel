@@ -127,7 +127,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                     voiceMode: state.voiceMode,
                     lavMode: state.lavMode,
                 }),
-                version: 12,
+                version: 13,
                 migrate: (persisted, version) => {
                     const state = persisted as Record<string, unknown>;
                     if (version < 2) {
@@ -171,6 +171,9 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                         if (state.localTtsVoice === "xenia") {
                             state.localTtsVoice = "kseniya";
                         }
+                    }
+                    if (version < 13) {
+                        state.qwenTtsVoice = state.qwenTtsVoice ?? "default";
                     }
                     return state;
                 },

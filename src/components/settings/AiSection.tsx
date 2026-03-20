@@ -17,6 +17,7 @@ const TTS_PROVIDERS = [
     { key: "yandex" as const, label: "Yandex", notif: "TTS: Yandex SpeechKit — применится к следующему ответу" },
     { key: "local" as const, label: "Silero (kseniya)", notif: "TTS: Silero Local — применится к следующему ответу" },
     { key: "piper" as const, label: "Piper (ruslan)", notif: "TTS: Piper Local — применится к следующему ответу" },
+    { key: "qwen" as const, label: "Qwen3-TTS (1.7B)", notif: "TTS: Qwen3-TTS — применится к следующему ответу" },
 ];
 
 function ProviderButton({

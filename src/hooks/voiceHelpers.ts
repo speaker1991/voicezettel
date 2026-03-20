@@ -235,6 +235,42 @@ export async function prefetchPiperTTS(text: string): Promise<Blob | null> {
 }
 
 /**
+ * Pre-fetch Qwen3-TTS audio for a sentence.
+ * Uses normalizeTextForTTS for number/English word handling.
+ * Retries up to 3 times with 600ms delay.
+ */
+export async function prefetchQwenTTS(text: string): Promise<Blob | null> {
+    const clean = normalizeTextForTTS(text);
+    if (!clean || clean.length < 1) return null;
+    console.log("[TTS-Qwen] Fetching audio for:", clean.slice(0, 50));
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const res = await fetch("/api/tts-qwen", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: clean }),
+            });
+            if (!res.ok) {
+                console.error(`[TTS-Qwen] Attempt ${attempt}: error:`, res.status);
+                if (attempt < 3) await new Promise(r => setTimeout(r, 600));
+                continue;
+            }
+            const blob = await res.blob();
+            if (blob.size > 0) {
+                console.log("[TTS-Qwen] Got audio blob:", blob.size, "bytes");
+                return blob;
+            }
+            console.warn(`[TTS-Qwen] Attempt ${attempt}: got empty blob`);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 600));
+        } catch (err) {
+            console.error(`[TTS-Qwen] Attempt ${attempt} error:`, err);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 600));
+        }
+    }
+    return null;
+}
+
+/**
  * Clean assistant response text: strip DSML, counter tags, preferences, JSON artifacts.
  */
 export function cleanResponseText(raw: string): string {

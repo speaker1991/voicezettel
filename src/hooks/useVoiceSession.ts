@@ -24,6 +24,7 @@ import {
     prefetchEdgeTTS,
     prefetchLocalTTS,
     prefetchPiperTTS,
+    prefetchQwenTTS,
     cleanResponseText,
     getAudioLevel,
 } from "@/hooks/voiceHelpers";
@@ -110,6 +111,13 @@ export function useVoiceSession() {
 
         // Прогрев Piper
         fetch("/api/tts-piper", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "прогрев" }),
+        }).catch(() => {});
+
+        // Прогрев Qwen
+        fetch("/api/tts-qwen", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: "прогрев" }),
@@ -330,7 +338,9 @@ export function useVoiceSession() {
                     ? prefetchLocalTTS(clean, localTtsVoice)
                     : ttsProvider === "piper"
                         ? prefetchPiperTTS(clean)
-                        : prefetchEdgeTTS(clean, edgeTtsVoice);
+                        : ttsProvider === "qwen"
+                            ? prefetchQwenTTS(clean)
+                            : prefetchEdgeTTS(clean, edgeTtsVoice);
                 queue.push({ text: clean, blobPromise });
             });
             console.log("[TTS] Stream finished, raw response length:", rawResponse.length);
@@ -493,6 +503,12 @@ export function useVoiceSession() {
             }).catch(() => {});
         } else if (ttsProvider === "piper") {
             fetch("/api/tts-piper", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "прогрев" }),
+            }).catch(() => {});
+        } else if (ttsProvider === "qwen") {
+            fetch("/api/tts-qwen", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text: "прогрев" }),

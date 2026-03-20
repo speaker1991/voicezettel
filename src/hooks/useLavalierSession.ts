@@ -16,6 +16,7 @@ import {
     prefetchEdgeTTS,
     prefetchLocalTTS,
     prefetchPiperTTS,
+    prefetchQwenTTS,
     cleanResponseText,
     AsyncQueue,
     type SentenceJob,
@@ -121,7 +122,9 @@ export function useLavalierSession() {
                                 ? prefetchLocalTTS(clean, localTtsVoice)
                                 : ttsProvider === "piper"
                                     ? prefetchPiperTTS(clean)
-                                    : prefetchEdgeTTS(clean, edgeTtsVoice);
+                                    : ttsProvider === "qwen"
+                                        ? prefetchQwenTTS(clean)
+                                        : prefetchEdgeTTS(clean, edgeTtsVoice);
                             queue.push({ text: clean, blobPromise });
                         }
                     },
