@@ -162,59 +162,76 @@ export async function prefetchEdgeTTS(text: string, voice: string): Promise<Blob
 /**
  * Pre-fetch Local Silero TTS audio for a sentence.
  * Uses normalizeTextForTTS for number/English word handling.
+ * Retries up to 3 times with 500ms delay.
  */
 export async function prefetchLocalTTS(
     text: string,
     speaker: string = "kseniya",
 ): Promise<Blob | null> {
-    try {
-        const clean = normalizeTextForTTS(text);
-        if (!clean || clean.length < 1) return null;
-
-        console.log("[TTS-Local] Fetching audio for:", clean.slice(0, 50), "speaker:", speaker);
-        const res = await fetch("/api/tts-local", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: clean, voice: speaker }),
-        });
-        if (!res.ok) {
-            console.error("[TTS-Local] /api/tts-local returned error:", res.status);
-            return null;
+    const clean = normalizeTextForTTS(text);
+    if (!clean || clean.length < 1) return null;
+    console.log("[TTS-Local] Fetching audio for:", clean.slice(0, 50), "speaker:", speaker);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const res = await fetch("/api/tts-local", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: clean, voice: speaker }),
+            });
+            if (!res.ok) {
+                console.error(`[TTS-Local] Attempt ${attempt}: /api/tts-local returned error:`, res.status);
+                if (attempt < 3) await new Promise(r => setTimeout(r, 500));
+                continue;
+            }
+            const blob = await res.blob();
+            if (blob.size > 0) {
+                console.log("[TTS-Local] Got audio blob:", blob.size, "bytes");
+                return blob;
+            }
+            console.warn(`[TTS-Local] Attempt ${attempt}: got empty blob`);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 500));
+        } catch (err) {
+            console.error(`[TTS-Local] Attempt ${attempt} error:`, err);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 500));
         }
-        const blob = await res.blob();
-        console.log("[TTS-Local] Got audio blob:", blob.size, "bytes, type:", blob.type);
-        return blob;
-    } catch (err) {
-        console.error("[TTS-Local] prefetchLocalTTS error:", err);
-        return null;
     }
+    return null;
 }
 
 /**
  * Pre-fetch Piper TTS audio for a sentence.
  * Uses normalizeTextForTTS for number/English word handling.
+ * Retries up to 3 times with 500ms delay.
  */
 export async function prefetchPiperTTS(text: string): Promise<Blob | null> {
     const clean = normalizeTextForTTS(text);
     if (!clean || clean.length < 1) return null;
-    try {
-        console.log("[TTS-Piper] Fetching audio for:", clean.slice(0, 50));
-        const res = await fetch("/api/tts-piper", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: clean }),
-        });
-        if (!res.ok) {
-            console.error("[TTS-Piper] /api/tts-piper returned error:", res.status);
-            return null;
+    console.log("[TTS-Piper] Fetching audio for:", clean.slice(0, 50));
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const res = await fetch("/api/tts-piper", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: clean }),
+            });
+            if (!res.ok) {
+                console.error(`[TTS-Piper] Attempt ${attempt}: error:`, res.status);
+                if (attempt < 3) await new Promise(r => setTimeout(r, 500));
+                continue;
+            }
+            const blob = await res.blob();
+            if (blob.size > 0) {
+                console.log("[TTS-Piper] Got audio blob:", blob.size, "bytes");
+                return blob;
+            }
+            console.warn(`[TTS-Piper] Attempt ${attempt}: got empty blob`);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 500));
+        } catch (err) {
+            console.error(`[TTS-Piper] Attempt ${attempt} error:`, err);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 500));
         }
-        const blob = await res.blob();
-        console.log("[TTS-Piper] Got audio blob:", blob.size, "bytes, type:", blob.type);
-        return blob;
-    } catch (err) {
-        console.error("[TTS-Piper] prefetchPiperTTS error:", err);
-        return null;
     }
+    return null;
 }
 
 /**
