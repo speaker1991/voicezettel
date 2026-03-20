@@ -253,7 +253,7 @@ export function useVoiceSession() {
             console.log("[TTS] Speaking started — mic muted, barge-in detector active");
             let count = 0;
             for await (const job of queue) {
-                if (!isSpeakingRef.current) break;
+                if (!isSpeakingRef.current && queue.isEmpty()) break;
                 count++;
                 console.log(`[TTS] Playing sentence #${count}: "${job.text.slice(0, 40)}..."`);
                 const blob = await job.blobPromise;
@@ -297,7 +297,7 @@ export function useVoiceSession() {
                 clean = clean.replace(/\[COUNTER:\w+\]/gi, "");
                 clean = clean.trim();
                 console.log("[TTS] Sentence detected:", clean.slice(0, 50), "length:", clean.length);
-                if (clean.length < 2) return;
+                if (clean.length < 1) return;
                 const blobPromise = ttsProvider === "local"
                     ? prefetchLocalTTS(clean, localTtsVoice)
                     : ttsProvider === "piper"

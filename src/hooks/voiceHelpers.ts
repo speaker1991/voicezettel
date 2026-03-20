@@ -116,6 +116,11 @@ export class AsyncQueue<T> {
             yield result.value;
         }
     }
+
+    /** Check if the queue buffer is empty and not yet finished */
+    isEmpty(): boolean {
+        return this.buffer.length === 0 && !this.finished;
+    }
 }
 
 /**
