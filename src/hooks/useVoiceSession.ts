@@ -403,9 +403,7 @@ export function useVoiceSession() {
         // Must run synchronously inside the user gesture (tap) to allow
         // future async play() calls to work without restriction.
         try {
-            audioEl.src =
-                "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAgD4AAAB+" +
-                "AAACABAAZGFOYQoAAAAA";
+            audioEl.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YQAAAAA=";
             audioEl.volume = 0;
             const unlockPromise = audioEl.play();
             if (unlockPromise !== undefined) {
