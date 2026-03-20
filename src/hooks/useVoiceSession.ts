@@ -99,7 +99,7 @@ export function useVoiceSession() {
     // Whisper/STT) to detect user speaking at >THRESHOLD for HOLD_MS.
     const startBargeInDetector = useCallback(() => {
         const THRESHOLD = 0.18;
-        const HOLD_MS = 300;
+        const HOLD_MS = 800;  // increased from 300 to avoid false barge-in on residual voice noise
         let holdStart: number | null = null;
 
         const check = () => {
@@ -249,8 +249,14 @@ export function useVoiceSession() {
             if (client && "muteMic" in client) {
                 (client as { muteMic: () => void }).muteMic();
             }
-            startBargeInDetector();
-            console.log("[TTS] Speaking started — mic muted, barge-in detector active");
+            // Delay barge-in detector start — let TTS begin playing before
+            // monitoring mic (avoids false trigger on residual voice echo)
+            setTimeout(() => {
+                if (isSpeakingRef.current) {
+                    startBargeInDetector();
+                }
+            }, 1200);
+            console.log("[TTS] Speaking started — mic muted, barge-in detector delayed 1200ms");
             let count = 0;
             for await (const job of queue) {
                 if (!isSpeakingRef.current && queue.isEmpty()) break;
