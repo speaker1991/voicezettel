@@ -27,7 +27,7 @@ export interface CountersActions {
 // ── Settings store types ────────────────────────────────────
 export type AiProvider = "openai" | "google" | "deepseek";
 export type TtsProvider = "browser" | "edge" | "yandex" | "openai" | "local" | "piper" | "qwen";
-export type VoiceMode = "cloud" | "local" | "browser" | "yandex";
+export type VoiceMode = "cloud" | "local" | "browser" | "yandex" | "gemini-live";
 
 export interface SettingsState {
     showUsdTokens: boolean;

@@ -20,6 +20,7 @@ export function VoiceSection() {
                         { value: "local" as const, label: "🖥 Local Core", desc: "GPU (faster-whisper)" },
                         { value: "browser" as const, label: "🌐 Browser", desc: "Web Speech API" },
                         { value: "yandex" as const, label: "☁️ Yandex STT", desc: "Облако" },
+                        { value: "gemini-live" as const, label: "✨ Gemini Live", desc: "Speech-to-Speech" },
                     ] as const).map((opt) => (
                         <button
                             key={opt.value}

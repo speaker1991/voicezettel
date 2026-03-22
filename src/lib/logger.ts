@@ -20,4 +20,12 @@ export const logger = {
     error: (...args: unknown[]) => {
         console.error("[VoiceZettel]", ...args);
     },
+    remoteLog: (level: "info" | "error", message: string, data?: unknown): void => {
+        if (typeof window === "undefined") return;
+        fetch("/api/logs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ level, message, data, source: "client-gemini" }),
+        }).catch(() => {});
+    },
 };

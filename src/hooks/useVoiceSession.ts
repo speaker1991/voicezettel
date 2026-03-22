@@ -36,6 +36,7 @@ import {
  */
 export function useVoiceSession() {
     const clientRef = useRef<LocalVoiceClient | YandexSttClient | BrowserSttClient | null>(null);
+    const isStartingRef = useRef(false);
     const [isVoiceActive, setIsVoiceActive] = useState(false);
     const { userId } = useUser();
 
@@ -292,7 +293,15 @@ export function useVoiceSession() {
                 if (!isSpeakingRef.current && queue.isEmpty()) break;
                 count++;
                 console.log(`[TTS] Playing sentence #${count}: "${job.text.slice(0, 40)}..."`);
-                const blob = await job.blobPromise;
+                const blob = await Promise.race([
+                    job.blobPromise,
+                    new Promise<Blob | null>(resolve =>
+                        setTimeout(() => {
+                            console.warn('[TTS] Blob timeout for:', job.text.slice(0, 40));
+                            resolve(null);
+                        }, 15000)  // 15 секунд — достаточно для Qwen
+                    ),
+                ]);
                 if (!isSpeakingRef.current) break;
                 if (blob && blob.size > 0) {
                     await playBlob(blob);
@@ -418,7 +427,8 @@ export function useVoiceSession() {
 
     // ── Start voice session ──
     const startVoice = useCallback(async () => {
-        if (clientRef.current) return;
+        if (clientRef.current || isStartingRef.current) return;
+        isStartingRef.current = true;
 
         // ── iOS Audio Unlock — MUST be FIRST, before any await ──
         // iOS user gesture context expires after the first microtask boundary (await).
@@ -458,6 +468,90 @@ export function useVoiceSession() {
         }
 
         const voiceMode = useSettingsStore.getState().voiceMode;
+
+        // ── Gemini Live: self-contained Speech-to-Speech via WebSocket ──
+        if (voiceMode === "gemini-live") {
+            setModality("voice");
+            setOrbState("listening");
+
+            // Шаг 1: запрос микрофона — ПЕРВЫМ, пока жив контекст жеста
+            let micStream: MediaStream;
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 16000,
+                    },
+                });
+            } catch (err) {
+                useNotificationStore.getState().addNotification(
+                    "Ошибка микрофона: " + (err instanceof Error ? err.message : String(err)),
+                    "error",
+                );
+                setOrbState("idle");
+                setModality("text");
+                isStartingRef.current = false;
+                return;
+            }
+
+            // Шаг 2: получить wsUrl с сервера
+            let wsUrl: string;
+            try {
+                const res = await fetch("/api/gemini-live-token", { method: "POST" });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const json = await res.json() as { wsUrl: string };
+                wsUrl = json.wsUrl;
+            } catch (err) {
+                micStream.getTracks().forEach((t) => t.stop());
+                useNotificationStore.getState().addNotification(
+                    "Gemini Live: ошибка токена", "error",
+                );
+                setOrbState("idle");
+                setModality("text");
+                isStartingRef.current = false;
+                return;
+            }
+
+            // Шаг 3: запустить WebSocket с готовым stream
+            const { connectGeminiLive, disconnectGeminiLive } =
+                await import("@/lib/geminiLiveClient");
+
+            clientRef.current = {
+                stop: () => {
+                    disconnectGeminiLive();
+                    micStream.getTracks().forEach((t) => t.stop());
+                },
+                getStream: () => micStream,
+                muteMic: () => {},
+                unmuteMic: () => {},
+            } as unknown as LocalVoiceClient;
+
+            setIsVoiceActive(true);
+            isStartingRef.current = false;
+
+            connectGeminiLive({
+                wsUrl,
+                micStream,
+                onTranscript: (text: string) => setLiveTranscript(text),
+                onOrbState: (state) => setOrbState(state),
+                onAudioLevel: (level: number) => setAudioLevel(level),
+                onMessage: (userText: string, assistantText: string) => {
+                    addMessage({
+                        id: crypto.randomUUID(), role: "user",
+                        content: userText, timestamp: new Date().toISOString(), source: "voice",
+                    });
+                    addMessage({
+                        id: crypto.randomUUID(), role: "assistant",
+                        content: assistantText, timestamp: new Date().toISOString(), source: "voice",
+                    });
+                    sendToObsidian(userText, assistantText, userId).catch(() => {});
+                },
+                onLog: (msg: string, data?: unknown) => logger.remoteLog("info", "[GeminiLive] " + msg, data),
+            });
+
+            return;
+        }
 
         // Determine which STT client to use
         let sttKind: "local" | "browser" | "yandex";
@@ -647,6 +741,7 @@ export function useVoiceSession() {
             clientRef.current = null;
             setOrbState("idle");
             setModality("text");
+            isStartingRef.current = false;
         }
     }, [setOrbState, setModality, setAudioLevel, setLiveTranscript, processVoiceCycle, cleanupTTS, startRecognition, abortRef]);
 
