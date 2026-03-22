@@ -14,6 +14,7 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
+    allowedDevOrigins: ["https://voicezettel.ru", "http://voicezettel.ru"],
     devIndicators: false,
     turbopack: {},
     images: {
