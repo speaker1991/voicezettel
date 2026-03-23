@@ -495,13 +495,22 @@ export function useVoiceSession() {
                 return;
             }
 
-            // Шаг 2: получить wsUrl с сервера
+            // Шаг 2: получить wsUrl и сжатый контекст заметок с сервера
             let wsUrl: string;
+            let vaultContext = "";
             try {
-                const res = await fetch("/api/gemini-live-token", { method: "POST" });
+                const res = await fetch("/api/gemini-live-token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userId }),
+                });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const json = await res.json() as { wsUrl: string };
+                const json = await res.json() as {
+                    wsUrl: string;
+                    vaultContext?: string;
+                };
                 wsUrl = json.wsUrl;
+                vaultContext = json.vaultContext ?? "";
             } catch (err) {
                 micStream.getTracks().forEach((t) => t.stop());
                 useNotificationStore.getState().addNotification(
@@ -533,19 +542,60 @@ export function useVoiceSession() {
             connectGeminiLive({
                 wsUrl,
                 micStream,
+                vaultContext,
                 onTranscript: (text: string) => setLiveTranscript(text),
                 onOrbState: (state) => setOrbState(state),
                 onAudioLevel: (level: number) => setAudioLevel(level),
                 onMessage: (userText: string, assistantText: string) => {
-                    addMessage({
-                        id: crypto.randomUUID(), role: "user",
-                        content: userText, timestamp: new Date().toISOString(), source: "voice",
-                    });
-                    addMessage({
-                        id: crypto.randomUUID(), role: "assistant",
-                        content: assistantText, timestamp: new Date().toISOString(), source: "voice",
-                    });
-                    sendToObsidian(userText, assistantText, userId).catch(() => {});
+                    setLiveTranscript("");
+
+                    if (userText) {
+                        addMessage({
+                            id: crypto.randomUUID(), role: "user",
+                            content: userText, timestamp: new Date().toISOString(), source: "voice",
+                        });
+                    }
+                    if (assistantText) {
+                        addMessage({
+                            id: crypto.randomUUID(), role: "assistant",
+                            content: assistantText, timestamp: new Date().toISOString(), source: "voice",
+                        });
+                    }
+
+                    // Сохранение заметок в Obsidian (fire-and-forget)
+                    void sendToObsidian(userText, assistantText, userId);
+
+                    // Классификация + счётчики (ideas/facts/tasks/persons)
+                    if (userText && userText.trim().length > 10) {
+                        void (async () => {
+                            try {
+                                const res = await fetch("/api/voice-memory", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ userId, userText, assistantText }),
+                                });
+                                if (!res.ok) {
+                                    logger.remoteLog("info", `[GeminiLive] voice-memory ${res.status}`);
+                                    return;
+                                }
+                                const data = await res.json() as { counterTags?: string[]; saved?: number };
+                                logger.remoteLog("info", "[GeminiLive] classifier result", data);
+                                if (data.counterTags && data.counterTags.length > 0) {
+                                    for (const rawTag of data.counterTags) {
+                                        // Tags: "[COUNTER:facts]" → "facts"
+                                        const match = /\[COUNTER:(\w+)\]/i.exec(rawTag);
+                                        const counterType = match ? match[1] : rawTag;
+                                        logger.remoteLog("info", `[GeminiLive] triggering counter: ${counterType}`);
+                                        useAnimationStore.getState().triggerAnimation(
+                                            counterType as "ideas" | "facts" | "persons" | "tasks",
+                                        );
+                                    }
+                                }
+                            } catch (err) {
+                                logger.remoteLog("error", "[GeminiLive] classifier error", err);
+                            }
+                        })();
+                    }
                 },
                 onLog: (msg: string, data?: unknown) => logger.remoteLog("info", "[GeminiLive] " + msg, data),
             });
@@ -700,6 +750,16 @@ export function useVoiceSession() {
 
             await client.start();
             setIsVoiceActive(true);
+
+            // Создаём <audio> элемент для TTS если ещё нет
+            if (!edgeTtsAudioElRef.current) {
+                const audioEl = document.createElement("audio");
+                audioEl.setAttribute("playsinline", "");
+                audioEl.setAttribute("webkit-playsinline", "");
+                document.body.appendChild(audioEl);
+                edgeTtsAudioElRef.current = audioEl;
+            }
+
             // Only start browser speech recognition as live-transcript overlay for non-browser STT
             if (sttKind !== "browser") startRecognition();
 

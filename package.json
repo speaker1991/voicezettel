@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
-    "tunnel": "powershell -ExecutionPolicy Bypass -File scripts/start-with-tunnel.ps1"
+    "tunnel": "powershell -ExecutionPolicy Bypass -File scripts/start-with-tunnel.ps1",
+    "proxy": "node ws-proxy.js"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",

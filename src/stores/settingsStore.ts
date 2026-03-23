@@ -62,7 +62,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
 
 ### 🎙 Контекст диалога (Fleeting Note)
 > *Краткая цитата или описание контекста, в котором мысль всплыла в разговоре.*`,
-                aiProvider: "deepseek",
+                aiProvider: "openai",
                 aiVoiceEnabled: true,
                 ttsProvider: "edge",
                 edgeTtsVoice: "ru-RU-SvetlanaNeural",
@@ -70,7 +70,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
                 piperTtsVoice: "ruslan",
                 obsidianApiKey: "",
                 obsidianApiUrl: "http://127.0.0.1:27123",
-                voiceMode: "cloud",
+                voiceMode: "gemini-live",
                 lavMode: false,
 
                 toggleShowUsdTokens: () =>

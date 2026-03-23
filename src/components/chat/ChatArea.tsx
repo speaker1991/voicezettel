@@ -33,8 +33,8 @@ function LiveTranscriptBubble() {
     const liveTranscript = useChatStore((s) => s.liveTranscript);
     const orbState = useChatStore((s) => s.orbState);
 
-    // Only show while user is actively speaking (not during "thinking" — avoids jump)
-    if (orbState !== "listening") return null;
+    // Показываем если: слушаем ИЛИ есть текст транскрипции (не скрываем при speaking)
+    if (orbState !== "listening" && !liveTranscript) return null;
 
     return (
         <div className="ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-[#7F22FE]/40 px-4 py-2.5 text-sm text-white/70 backdrop-blur-sm">

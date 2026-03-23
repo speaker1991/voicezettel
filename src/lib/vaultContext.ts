@@ -73,16 +73,32 @@ export async function loadVaultContext(userId: string): Promise<string> {
     }
 
     try {
-        const files = await collectMdFiles(userDir);
+        // Приоритет: Zettelkasten (факты, идеи, задачи) → остальные папки
+        // Archive пропускаем — там только сырые логи диалогов
+        const zettelDir = join(userDir, "Zettelkasten");
+        const zettelFiles = await collectMdFiles(zettelDir);
 
-        if (files.length === 0) return "";
+        // Также собираем файлы из корня (если есть)
+        const rootFiles: string[] = [];
+        try {
+            const entries = await readdir(userDir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (entry.name.startsWith(".")) continue;
+                if (entry.isDirectory()) continue; // skip subdirs (handled separately)
+                if (extname(entry.name) === ".md") {
+                    rootFiles.push(join(userDir, entry.name));
+                }
+            }
+        } catch { /* user dir might not exist */ }
+
+        const allFiles = [...zettelFiles, ...rootFiles];
+
+        if (allFiles.length === 0) return "";
 
         const chunks: string[] = [];
         let totalChars = 0;
 
-        for (const filePath of files) {
-            if (totalChars >= MAX_CONTEXT_CHARS) break;
-
+        for (const filePath of allFiles) {
             try {
                 const content = await readFile(filePath, "utf-8");
                 const relativePath = filePath
@@ -90,15 +106,6 @@ export async function loadVaultContext(userId: string): Promise<string> {
                     .replace(/\\/g, "/");
 
                 const chunk = `\n--- ${relativePath} ---\n${content.trim()}\n`;
-
-                if (totalChars + chunk.length > MAX_CONTEXT_CHARS) {
-                    const remaining = MAX_CONTEXT_CHARS - totalChars;
-                    if (remaining > 100) {
-                        chunks.push(chunk.slice(0, remaining) + "\n...(обрезано)");
-                    }
-                    break;
-                }
-
                 chunks.push(chunk);
                 totalChars += chunk.length;
             } catch {
@@ -110,8 +117,8 @@ export async function loadVaultContext(userId: string): Promise<string> {
 
         cacheMap.set(userId, { text: result, timestamp: Date.now() });
 
-        logger.debug(
-            `Vault context [${userId}]: ${files.length} files, ${totalChars} chars`,
+        logger.info(
+            `Vault context [${userId}]: ${allFiles.length} files (zettel: ${zettelFiles.length}), ${totalChars} chars`,
         );
 
         return result;

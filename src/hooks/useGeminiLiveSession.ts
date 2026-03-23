@@ -164,15 +164,27 @@ export function useGeminiLiveSession() {
     /* ── Connect ── */
     const connect = useCallback(
         async (systemPrompt?: string) => {
-            // 1. Fetch token / wsUrl
+            // 1. СНАЧАЛА микрофон — в user gesture context (до любых async)
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    sampleRate: 16000,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                },
+            });
+            micStreamRef.current = stream;
+
+            // 2. Fetch token / wsUrl
             const res = await fetch("/api/gemini-live-token", { method: "POST" });
             if (!res.ok) {
+                stream.getTracks().forEach((t) => t.stop());
                 const body = await res.text();
                 throw new Error(`Token fetch failed: ${body}`);
             }
             const { wsUrl, model } = (await res.json()) as TokenResponse;
 
-            // 2. Open WebSocket
+            // 3. Open WebSocket
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
 
@@ -204,8 +216,8 @@ export function useGeminiLiveSession() {
                 setIsConnected(true);
                 setTranscript("");
 
-                // 3. Start microphone capture
-                void startMicCapture(ws);
+                // Start mic capture with already-acquired stream
+                void startMicCapture(ws, stream);
             };
 
             ws.onmessage = handleMessage;
@@ -224,16 +236,7 @@ export function useGeminiLiveSession() {
     );
 
     /* ── Microphone capture ── */
-    const startMicCapture = async (ws: WebSocket) => {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                sampleRate: 16000,
-                channelCount: 1,
-                echoCancellation: true,
-                noiseSuppression: true,
-            },
-        });
-        micStreamRef.current = stream;
+    const startMicCapture = async (ws: WebSocket, stream: MediaStream) => {
 
         const ctx = new AudioContext({ sampleRate: 16000 });
         if (ctx.state === "suspended") {

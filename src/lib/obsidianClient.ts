@@ -47,9 +47,9 @@ export async function sendToObsidian(
     userText: string,
     assistantText: string,
     userId?: string,
-): Promise<void> {
+): Promise<number> {
     // Skip duplicates within 30 seconds
-    if (isDuplicate(userText, assistantText)) return;
+    if (isDuplicate(userText, assistantText)) return 0;
 
     const { aiProvider } = useSettingsStore.getState();
 
@@ -80,7 +80,7 @@ export async function sendToObsidian(
         if (data.error) throw new Error(data.error);
         if (data.skipped) {
             logger.debug("Zettelkasten: skipped (no valuable ideas)");
-            return;
+            return 0;
         }
 
         // Show notification about saved notes
@@ -97,9 +97,12 @@ export async function sendToObsidian(
                         "info",
                     );
             }
+            return savedCount;
         }
+        return 0;
     } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         logger.error(`Obsidian error: ${msg}`);
+        return 0;
     }
 }

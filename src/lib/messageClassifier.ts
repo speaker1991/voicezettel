@@ -4,6 +4,7 @@ import { saveMemory } from "@/lib/memoryStore";
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const GOOGLE_GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
 
 interface ClassifiedItem {
     type: "idea" | "fact" | "task" | "persona";
@@ -20,8 +21,8 @@ const CLASSIFICATION_PROMPT = `Ты — классификатор текста.
 
 КАТЕГОРИИ:
 - "idea" — идея, предложение, концепция, решение, адаптация
-- "fact" — факт, данные, цифры, новость, обновление, информация
-- "task" — задача, действие, план (слова: нужно, стоит, надо, пересмотреть, сделать, внести, обновить)
+- "fact" — факт, данные, цифры, новость, обновление, информация, предпочтение, любимое
+- "task" — задача, действие, план (слова: нужно, стоит, надо, пересмотреть, сделать, внести, обновить, изучить)
 - "persona" — конкретный человек с контекстом
 
 ПРАВИЛА:
@@ -29,6 +30,7 @@ const CLASSIFICATION_PROMPT = `Ты — классификатор текста.
 2. Одно сообщение ВСЕГДА может содержать 2-4 элемента — ищи ВСЕ
 3. Если есть хоть намёк на категорию — ВКЛЮЧАЙ элемент
 4. Лучше включить лишний элемент, чем пропустить нужный
+5. "Мой любимый фильм/книга/цвет" = ФАКТ (одна заметка, не две!)
 
 ПРИМЕР 1:
 Вход: "Обновление Figma добавило новые auto-layout-функции, стоит пересмотреть шаблоны, чтобы использовать их эффективнее."
@@ -40,21 +42,85 @@ const CLASSIFICATION_PROMPT = `Ты — классификатор текста.
 ]
 
 ПРИМЕР 2:
-Вход: "На складе 375 процессоров, нужно заказать ещё 100 до конца недели"
+Вход: "Мой любимый фильм это Красотка"
 Выход:
 [
-  {"type":"fact","title":"Остаток процессоров на складе","essence":"На складе 375 процессоров"},
-  {"type":"task","title":"Заказать процессоры","essence":"Заказать ещё 100 процессоров до конца недели"}
+  {"type":"fact","title":"Любимый фильм — Красотка","essence":"Любимый фильм пользователя — Красотка"}
 ]
 
 Если в сообщении НЕТ идей/фактов/задач (только приветствие) — верни: []
 Отвечай ТОЛЬКО валидным JSON-массивом.`;
 
 /**
+ * Call Gemini REST API for classification.
+ */
+async function classifyWithGemini(userMessage: string): Promise<string> {
+    const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_GEMINI_API_KEY}`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                system_instruction: { parts: [{ text: CLASSIFICATION_PROMPT }] },
+                contents: [{ role: "user", parts: [{ text: userMessage }] }],
+                generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
+            }),
+            signal: AbortSignal.timeout(15000),
+        },
+    );
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`Gemini ${response.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const data = (await response.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "[]";
+}
+
+/**
+ * Call OpenAI-compatible API for classification.
+ */
+async function classifyWithChat(userMessage: string, provider: "openai" | "deepseek"): Promise<string> {
+    const apiKey = provider === "openai" ? OPENAI_API_KEY : DEEPSEEK_API_KEY;
+    const apiUrl = provider === "openai"
+        ? "https://api.openai.com/v1/chat/completions"
+        : "https://api.deepseek.com/chat/completions";
+    const model = provider === "openai" ? "gpt-4o-mini" : "deepseek-chat";
+
+    const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model,
+            temperature: 0.1,
+            messages: [
+                { role: "system", content: CLASSIFICATION_PROMPT },
+                { role: "user", content: userMessage },
+            ],
+        }),
+        signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`${model} ${response.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const data = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+    };
+    return data.choices[0]?.message?.content?.trim() ?? "[]";
+}
+
+/**
  * Classifies a user message into ideas/facts/tasks/personas,
  * creates Zettelkasten notes, and returns counter tags to inject.
- *
- * Runs as fire-and-forget — does not block the main response stream.
  */
 export async function classifyAndSave(
     userId: string,
@@ -64,46 +130,23 @@ export async function classifyAndSave(
         return { items: [], counterTags: [] };
     }
 
-    // Prefer DeepSeek (works from Russia), fallback to OpenAI
-    const apiKey = DEEPSEEK_API_KEY || OPENAI_API_KEY;
-    const apiUrl = DEEPSEEK_API_KEY
-        ? "https://api.deepseek.com/chat/completions"
-        : "https://api.openai.com/v1/chat/completions";
-    const model = DEEPSEEK_API_KEY ? "deepseek-chat" : "gpt-4o-mini";
-
-    if (!apiKey) {
+    if (!OPENAI_API_KEY && !GOOGLE_GEMINI_API_KEY && !DEEPSEEK_API_KEY) {
         return { items: [], counterTags: [] };
     }
 
     try {
-        logger.info(`[Classifier] Starting classification for: "${userMessage.slice(0, 50)}..." via ${model}`);
-        const response = await fetch(apiUrl, {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                model,
-                temperature: 0.1,
-                messages: [
-                    { role: "system", content: CLASSIFICATION_PROMPT },
-                    { role: "user", content: userMessage },
-                ],
-            }),
-            signal: AbortSignal.timeout(10000),
-        });
-
-        if (!response.ok) {
-            const errText = await response.text().catch(() => "");
-            logger.error(`[Classifier] API error: ${response.status} — ${errText.slice(0, 200)}`);
-            return { items: [], counterTags: [] };
+        // Priority: OpenAI (works through VPN, separate quota) → Gemini → DeepSeek
+        let raw: string;
+        if (OPENAI_API_KEY) {
+            logger.info(`[Classifier] Using gpt-4o-mini for: "${userMessage.slice(0, 50)}..."`);
+            raw = await classifyWithChat(userMessage, "openai");
+        } else if (GOOGLE_GEMINI_API_KEY) {
+            logger.info(`[Classifier] Using Gemini for: "${userMessage.slice(0, 50)}..."`);
+            raw = await classifyWithGemini(userMessage);
+        } else {
+            logger.info(`[Classifier] Using deepseek-chat for: "${userMessage.slice(0, 50)}..."`);
+            raw = await classifyWithChat(userMessage, "deepseek");
         }
-
-        const data = (await response.json()) as {
-            choices: Array<{ message: { content: string } }>;
-        };
-        const raw = data.choices[0]?.message?.content?.trim() ?? "[]";
 
         // Parse JSON — strip markdown fences if present
         const cleaned = raw.replace(/^```json?\s*/i, "").replace(/```\s*$/, "");
